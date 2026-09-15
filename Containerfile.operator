@@ -1,0 +1,33 @@
+# Copyright Contributors to the Open Cluster Management project
+# Licensed under the Apache License 2.0
+
+FROM brew.registry.redhat.io/rh-osbs/openshift-golang-builder:rhel_9_1.26 AS builder
+
+WORKDIR /workspace
+COPY . .
+
+RUN CGO_ENABLED=0 go build -ldflags "-s -w -X main.Version=$(git describe --always --tags --dirty 2>/dev/null || echo unknown) -X main.Revision=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" -o /go/bin/observatorium-api .
+
+# -----------------------------------------------------------------------------
+
+FROM registry.redhat.io/ubi9/ubi-minimal-pqc:latest
+
+LABEL maintainer="The ACM Observability maintainers"
+
+COPY --from=builder /go/bin/observatorium-api /bin/observatorium-api
+
+USER 1001
+
+ENTRYPOINT [ "/bin/observatorium-api" ]
+
+# cpe, name, and version are auto-injected by the Konflux common pipeline's
+# fetch-product-metadata task (derived from the output-image param) - leave empty.
+LABEL com.redhat.component="mcoa-gateway" \
+  url="https://github.com/stolostron/mcoa-gateway" \
+  cpe="" \
+  summary="Multi-Cluster Observability Addon Gateway" \
+  io.openshift.expose-services="" \
+  io.openshift.tags="data,images" \
+  io.k8s.display-name="mcoa-gateway" \
+  description="Multi-Cluster Observability Addon Gateway" \
+  io.k8s.description="Multi-Cluster Observability Addon Gateway"
