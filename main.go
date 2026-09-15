@@ -702,45 +702,27 @@ func main() {
 					stdlog.Fatalf("failed to read upstream logs TLS: %v", err)
 				}
 
-				// Logs WRITE endpoints (without tenant in path, mTLS auth only)
-				if cfg.logs.writeEndpoint != nil {
-					r.Group(func(r chi.Router) {
-						r.Use(middleware.Timeout(cfg.logs.upstreamWriteTimeout))
-						// Extract tenant from mTLS certificate OU
-						r.Use(authentication.WithMTLSTenantExtraction(logger, cfg.logs.tenantHeader))
-
-						r.Mount("/api/logs/v1", logsv1.NewHandler(
-							nil, // read endpoint
-							nil, // tail endpoint
-							cfg.logs.writeEndpoint,
-							nil, // rules endpoint
-							cfg.logs.rulesReadOnly,
-							logsUpstreamClientOptions,
-							logsv1.Logger(logger),
-							logsv1.WithRegistry(reg),
-							logsv1.WithHandlerInstrumenter(instrumenter),
-						))
-					})
-				}
-
-				// Logs READ endpoints (no tenant in path, SSO or mTLS auth, no RBAC)
+				// Logs endpoints (write: mTLS auth, read: SSO or mTLS auth with label enforcement)
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.Timeout(cfg.logs.upstreamWriteTimeout))
 					r.Mount("/api/logs/v1",
 						logsv1.NewHandler(
 							cfg.logs.readEndpoint,
 							cfg.logs.tailEndpoint,
-							nil, // write endpoint (handled separately above)
+							cfg.logs.writeEndpoint,
 							cfg.logs.rulesEndpoint,
 							cfg.logs.rulesReadOnly,
 							logsUpstreamClientOptions,
 							logsv1.Logger(logger),
 							logsv1.WithRegistry(reg),
 							logsv1.WithHandlerInstrumenter(instrumenter),
-							logsv1.WithGlobalMiddleware(authentication.WithTenantFromHeader(cfg.logs.tenantHeader)),
-							logsv1.WithGlobalMiddleware(authentication.WithTenantMiddlewares(pm.Middlewares)),
-							logsv1.WithGlobalMiddleware(authorization.WithTenantLabel(cfg.logs.tenantLabel)),
-							logsv1.WithGlobalMiddleware(logsv1.WithEnforceAuthorizationLabels()),
+							// Write middleware: mTLS tenant extraction only
+							logsv1.WithWriteMiddleware(authentication.WithMTLSTenantExtraction(logger, cfg.logs.tenantHeader)),
+							// Read middleware: tenant from header + authentication + label enforcement
+							logsv1.WithReadMiddleware(authentication.WithTenantFromHeader(cfg.logs.tenantHeader)),
+							logsv1.WithReadMiddleware(authentication.WithTenantMiddlewares(pm.Middlewares)),
+							logsv1.WithReadMiddleware(authorization.WithTenantLabel(cfg.logs.tenantLabel)),
+							logsv1.WithReadMiddleware(logsv1.WithEnforceAuthorizationLabels()),
 							logsv1.WithRulesLabelFilters(cfg.logs.rulesLabelFilters),
 						),
 					)
@@ -765,43 +747,25 @@ func main() {
 					stdlog.Fatalf("failed to read upstream traces TLS: %v", err)
 				}
 
-				// Traces WRITE endpoints (without tenant in path, mTLS auth only)
-				if cfg.traces.writeOTLPHTTPEndpoint != nil {
-					r.Group(func(r chi.Router) {
-						r.Use(middleware.Timeout(cfg.traces.upstreamWriteTimeout))
-						// Extract tenant from mTLS certificate OU
-						r.Use(authentication.WithMTLSTenantExtraction(logger, cfg.traces.tenantHeader))
-
-						r.Mount("/api/traces/v1", tracesv1.NewV2Handler(
-							nil, // read endpoint
-							"",  // read template endpoint
-							nil, // tempo endpoint
-							cfg.traces.writeOTLPHTTPEndpoint,
-							tracesUpstreamTLSOptions,
-							tracesv1.Logger(logger),
-							tracesv1.WithRegistry(reg),
-							tracesv1.WithHandlerInstrumenter(instrumenter),
-						))
-					})
-				}
-
-				// Traces READ endpoints (no tenant in path, SSO or mTLS auth, no RBAC)
+				// Traces endpoints (write: mTLS auth, read: SSO or mTLS auth)
 				r.Group(func(r chi.Router) {
-					r.Use(authentication.WithTenantFromHeader(cfg.traces.tenantHeader))
-					r.Use(authentication.WithTenantMiddlewares(pm.Middlewares))
 					r.Use(middleware.Timeout(cfg.traces.upstreamWriteTimeout))
-
 					r.Mount("/api/traces/v1",
 						tracesv1.NewV2Handler(
 							cfg.traces.readEndpoint,
 							cfg.traces.readTemplateEndpoint,
 							cfg.traces.tempoEndpoint,
-							nil, // write endpoint (handled separately above)
+							cfg.traces.writeOTLPHTTPEndpoint,
 							tracesUpstreamTLSOptions,
 							tracesv1.Logger(logger),
 							tracesv1.WithRegistry(reg),
 							tracesv1.WithHandlerInstrumenter(instrumenter),
 							tracesv1.WithSpanRoutePrefix("/api/traces/v1"),
+							// Write middleware: mTLS tenant extraction only
+							tracesv1.WithWriteMiddleware(authentication.WithMTLSTenantExtraction(logger, cfg.traces.tenantHeader)),
+							// Read middleware: tenant from header + authentication
+							tracesv1.WithReadMiddleware(authentication.WithTenantFromHeader(cfg.traces.tenantHeader)),
+							tracesv1.WithReadMiddleware(authentication.WithTenantMiddlewares(pm.Middlewares)),
 						),
 					)
 				})
