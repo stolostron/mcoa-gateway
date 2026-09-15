@@ -29,11 +29,11 @@ const (
 	subjectKey contextKey = "subject"
 	// tenantKey is the key that holds the tenant in a request context.
 	tenantKey contextKey = "tenant"
-	// tenantIDKey is the key that holds the tenant ID in a request context.
-	tenantIDKey contextKey = "tenantID"
 )
 
 // WithTenant finds the tenant from the URL parameters and adds it to the request context.
+// Deprecated: This middleware is only used in tests. Production code should use
+// WithTenantFromHeader or WithMTLSTenantExtraction instead.
 func WithTenant(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tenant := chi.URLParam(r, "tenant")
@@ -41,19 +41,6 @@ func WithTenant(next http.Handler) http.Handler {
 			context.WithValue(r.Context(), tenantKey, tenant),
 		))
 	})
-}
-
-// WithTenantID returns a middleware that finds the tenantID using the tenant
-// from the URL parameters and adds it to the request context.
-func WithTenantID(tenantIDs map[string]string) Middleware {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			tenant := chi.URLParam(r, "tenant")
-			next.ServeHTTP(w, r.WithContext(
-				context.WithValue(r.Context(), tenantIDKey, tenantIDs[tenant]),
-			))
-		})
-	}
 }
 
 // WithAccessToken returns a middleware that looks up the authorization access
@@ -80,31 +67,12 @@ func WithAccessToken() Middleware {
 	}
 }
 
-// WithTenantHeader returns a new middleware that adds the ID of the tenant to the specified header.
-func WithTenantHeader(header string, tenantIDs map[string]string) Middleware {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			tenant := chi.URLParam(r, "tenant")
-			r.Header.Set(header, tenantIDs[tenant])
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
 // GetTenant extracts the tenant from provided context.
 func GetTenant(ctx context.Context) (string, bool) {
 	value := ctx.Value(tenantKey)
 	tenant, ok := value.(string)
 
 	return tenant, ok
-}
-
-// GetTenantID extracts the tenant ID from provided context.
-func GetTenantID(ctx context.Context) (string, bool) {
-	value := ctx.Value(tenantIDKey)
-	id, ok := value.(string)
-
-	return id, ok
 }
 
 // GetSubject extracts the subject from provided context.

@@ -123,12 +123,6 @@ func (rh *rulesHandler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, ok := authentication.GetTenantID(r.Context())
-	if !ok {
-		httperr.PrometheusAPIError(w, "error finding tenant ID", http.StatusUnauthorized)
-		return
-	}
-
 	resp, err := rh.client.ListRules(r.Context(), tenant)
 	if err != nil {
 		level.Error(rh.logger).Log("msg", "could not list rules", "err", err.Error())
@@ -164,7 +158,7 @@ func (rh *rulesHandler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = enforceLabelsInRules(rawRules, rh.tenantLabel, id)
+	err = enforceLabelsInRules(rawRules, rh.tenantLabel, tenant)
 	if err != nil {
 		level.Error(rh.logger).Log("msg", "could not enforce labels in rules", "err", err.Error())
 		httperr.PrometheusAPIError(w, "failed to process rules", http.StatusInternalServerError)
@@ -190,11 +184,6 @@ func (rh *rulesHandler) put(w http.ResponseWriter, r *http.Request) {
 	tenant, ok := authentication.GetTenant(r.Context())
 	if !ok {
 		httperr.PrometheusAPIError(w, "error finding tenant", http.StatusUnauthorized)
-	}
-
-	id, ok := authentication.GetTenantID(r.Context())
-	if !ok {
-		httperr.PrometheusAPIError(w, "error finding tenant ID", http.StatusUnauthorized)
 		return
 	}
 
@@ -206,7 +195,7 @@ func (rh *rulesHandler) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = enforceLabelsInRules(rawRules, rh.tenantLabel, id)
+	err = enforceLabelsInRules(rawRules, rh.tenantLabel, tenant)
 	if err != nil {
 		level.Error(rh.logger).Log("msg", "could not enforce labels in rules", "err", err.Error())
 		httperr.PrometheusAPIError(w, "failed to process rules", http.StatusInternalServerError)

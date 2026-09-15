@@ -112,7 +112,7 @@ func (m instrumentedHandlerFactory) NewHandler(extraLabels prometheus.Labels, ne
 			}
 		}
 
-		tenant, _ := authentication.GetTenantID(r.Context())
+		tenant, _ := authentication.GetTenant(r.Context())
 		m.metricsCollector.requestCounter.
 			MustCurryWith(requestLabels).
 			WithLabelValues(strconv.Itoa(rw.Status()), r.Method, tenant).

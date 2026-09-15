@@ -30,9 +30,9 @@ func WithEnforceTenancyOnFilter(label string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		// https://github.com/prometheus-community/prom-label-proxy/
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			id, ok := authentication.GetTenantID(r.Context())
+			tenant, ok := authentication.GetTenant(r.Context())
 			if !ok {
-				httperr.PrometheusAPIError(w, "error finding tenant ID", http.StatusInternalServerError)
+				httperr.PrometheusAPIError(w, "error finding tenant", http.StatusInternalServerError)
 
 				return
 			}
@@ -40,7 +40,7 @@ func WithEnforceTenancyOnFilter(label string) func(http.Handler) http.Handler {
 			matcher := &labels.Matcher{
 				Name:  label,
 				Type:  labels.MatchEqual,
-				Value: id,
+				Value: tenant,
 			}
 			matcherStr := matcher.String()
 
@@ -79,9 +79,9 @@ func WithEnforceTenancyOnSilenceMatchers(label string) func(http.Handler) http.H
 	return func(next http.Handler) http.Handler {
 		// https://github.com/prometheus-community/prom-label-proxy/injectproxy/silences.go
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			id, ok := authentication.GetTenantID(r.Context())
+			tenant, ok := authentication.GetTenant(r.Context())
 			if !ok {
-				httperr.PrometheusAPIError(w, "error finding tenant ID", http.StatusInternalServerError)
+				httperr.PrometheusAPIError(w, "error finding tenant", http.StatusInternalServerError)
 				return
 			}
 
@@ -105,7 +105,7 @@ func WithEnforceTenancyOnSilenceMatchers(label string) func(http.Handler) http.H
 
 			var falsy bool
 			modified := models.Matchers{
-				&models.Matcher{Name: &(label), Value: &id, IsRegex: &falsy},
+				&models.Matcher{Name: &(label), Value: &tenant, IsRegex: &falsy},
 			}
 			for _, m := range sil.Matchers {
 				if m.Name != nil && *m.Name == label {
@@ -150,9 +150,9 @@ func WithEnforceTenancyOnSilenceID(label string, upstream *url.URL, transport ht
 				return
 			}
 
-			tenantID, ok := authentication.GetTenantID(r.Context())
+			tenant, ok := authentication.GetTenant(r.Context())
 			if !ok {
-				httperr.PrometheusAPIError(w, "error finding tenant ID", http.StatusInternalServerError)
+				httperr.PrometheusAPIError(w, "error finding tenant", http.StatusInternalServerError)
 				return
 			}
 
@@ -167,7 +167,7 @@ func WithEnforceTenancyOnSilenceID(label string, upstream *url.URL, transport ht
 				return
 			}
 
-			if !hasMatcherForLabel(sil.Matchers, label, tenantID) {
+			if !hasMatcherForLabel(sil.Matchers, label, tenant) {
 				httperr.PrometheusAPIError(w, "forbidden", http.StatusForbidden)
 				return
 			}
