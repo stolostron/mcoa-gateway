@@ -167,7 +167,7 @@ func newOIDCAuthenticator(c map[string]interface{}, tenant string,
 		provider:     provider,
 		verifier:     verifier,
 		client:       client,
-		cookieName:   fmt.Sprintf("observatorium_%s", tenant),
+		cookieName:   fmt.Sprintf("mcoa_gateway_%s", tenant),
 		redirectURL:  path.Join("/", tenant),
 	}
 
