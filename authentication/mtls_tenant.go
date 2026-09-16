@@ -7,7 +7,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 
-	"github.com/observatorium/api/httperr"
+	"github.com/stolostron/mcoa-gateway/httperr"
 )
 
 // MTLSTenantExtractor is a middleware that extracts the tenant from the mTLS client certificate's

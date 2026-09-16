@@ -11,7 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 
-	"github.com/observatorium/api/logger"
+	"github.com/stolostron/mcoa-gateway/logger"
 )
 
 type dummyAuthenticator struct {

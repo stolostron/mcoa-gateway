@@ -6,7 +6,7 @@ BIN_DIR ?= $(TMP_DIR)/bin
 FIRST_GOPATH := $(firstword $(subst :, ,$(shell go env GOPATH)))
 OS ?= $(shell go env GOOS)
 ARCH ?= $(shell go env GOARCH)
-BIN_NAME ?= observatorium-api
+BIN_NAME ?= mcoa-gateway
 GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 GIT_REVISION := $(shell git rev-parse --short HEAD)
 
@@ -15,13 +15,13 @@ BUILD_DATE := $(shell date -u +"%Y-%m-%d")
 BUILD_TIMESTAMP := $(shell date -u +"%Y-%m-%dT%H:%M:%S%Z")
 VCS_BRANCH := $(strip $(shell git rev-parse --abbrev-ref HEAD | tr / -))
 VCS_REF := $(strip $(shell [ -d .git ] && git rev-parse --short HEAD))
-DOCKER_REPO ?= quay.io/observatorium/api
+DOCKER_REPO ?= quay.io/stolostron/mcoa-gateway
 
 CONTAINER_CMD := docker run --rm \
 		-u="$(shell id -u):$(shell id -g)" \
 		-v "$(shell go env GOCACHE):/.cache/go-build" \
-		-v "$(PWD):/go/src/github.com/observatorium/api:Z" \
-		-w "/go/src/github.com/observatorium/api" \
+		-v "$(PWD):/go/src/github.com/stolostron/mcoa-gateway:Z" \
+		-w "/go/src/github.com/stolostron/mcoa-gateway" \
 		-e USER=deadbeef \
 		-e GO111MODULE=on \
 		quay.io/coreos/jsonnet-ci
@@ -267,7 +267,7 @@ $(SHELLCHECK): $(BIN_DIR)
 	curl -sNL "https://github.com/koalaman/shellcheck/releases/download/stable/shellcheck-stable.$(OS).$(shell uname -m).tar.xz" | tar --strip-components=1 -xJf - -C $(BIN_DIR)
 
 $(MOCKPROVIDER): | deps $(BIN_DIR)
-	go build -tags tools -o $@ github.com/observatorium/api/test/mock
+	go build -tags tools -o $@ github.com/stolostron/mcoa-gateway/test/mock
 
 $(PROTOC): $(TMP_DIR) $(BIN_DIR)
 	@PROTOC_VERSION="$(PROTOC_VERSION)" TMP_DIR="$(TMP_DIR)" BIN_DIR="$(BIN_DIR)" scripts/install_protoc.sh

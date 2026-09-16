@@ -10,7 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/alertmanager/api/v2/models"
 
-	"github.com/observatorium/api/authentication"
+	"github.com/stolostron/mcoa-gateway/authentication"
 )
 
 func TestHasMatcherForLabel(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/prometheus/model/labels"
 
-	"github.com/observatorium/api/authentication"
+	"github.com/stolostron/mcoa-gateway/authentication"
 )
 
 // mockTenantHandler wraps a test handler with tenant context setup

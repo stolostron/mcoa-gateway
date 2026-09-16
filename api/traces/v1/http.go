@@ -20,9 +20,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
-	"github.com/observatorium/api/authentication"
-	"github.com/observatorium/api/proxy"
-	"github.com/observatorium/api/tls"
+	"github.com/stolostron/mcoa-gateway/authentication"
+	"github.com/stolostron/mcoa-gateway/proxy"
+	"github.com/stolostron/mcoa-gateway/tls"
 )
 
 var baseTagRegexp = regexp.MustCompile(`<base +href="\/" +data-inject-target="BASE_URL" +\/>`)
@@ -92,7 +92,6 @@ func WithWriteMiddleware(m func(http.Handler) http.Handler) HandlerOption {
 		h.writeMiddlewares = append(h.writeMiddlewares, m)
 	}
 }
-
 
 type handlerInstrumenter interface {
 	NewHandler(labels prometheus.Labels, handler http.Handler) http.HandlerFunc

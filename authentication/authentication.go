@@ -10,7 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 
-	"github.com/observatorium/api/httperr"
+	"github.com/stolostron/mcoa-gateway/httperr"
 )
 
 // providerFactories map is used for the providers' self-registration.

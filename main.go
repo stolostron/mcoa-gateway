@@ -45,19 +45,19 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	logsv1 "github.com/observatorium/api/api/logs/v1"
-	metricslegacy "github.com/observatorium/api/api/metrics/legacy"
-	metricsv1 "github.com/observatorium/api/api/metrics/v1"
-	probesv1 "github.com/observatorium/api/api/probes/v1"
-	tracesv1 "github.com/observatorium/api/api/traces/v1"
-	"github.com/observatorium/api/authentication"
-	"github.com/observatorium/api/authorization"
-	"github.com/observatorium/api/client"
-	"github.com/observatorium/api/logger"
-	"github.com/observatorium/api/ratelimit"
-	"github.com/observatorium/api/server"
-	"github.com/observatorium/api/tls"
-	"github.com/observatorium/api/tracing"
+	logsv1 "github.com/stolostron/mcoa-gateway/api/logs/v1"
+	metricslegacy "github.com/stolostron/mcoa-gateway/api/metrics/legacy"
+	metricsv1 "github.com/stolostron/mcoa-gateway/api/metrics/v1"
+	probesv1 "github.com/stolostron/mcoa-gateway/api/probes/v1"
+	tracesv1 "github.com/stolostron/mcoa-gateway/api/traces/v1"
+	"github.com/stolostron/mcoa-gateway/authentication"
+	"github.com/stolostron/mcoa-gateway/authorization"
+	"github.com/stolostron/mcoa-gateway/client"
+	"github.com/stolostron/mcoa-gateway/logger"
+	"github.com/stolostron/mcoa-gateway/ratelimit"
+	"github.com/stolostron/mcoa-gateway/server"
+	"github.com/stolostron/mcoa-gateway/tls"
+	"github.com/stolostron/mcoa-gateway/tracing"
 )
 
 const (
@@ -311,13 +311,13 @@ func main() {
 
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(
-		promclientversion.NewCollector("observatorium"),
+		promclientversion.NewCollector("mcoa_gateway"),
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
 
 	skippedTenants := promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
-		Namespace: "observatorium",
+		Namespace: "mcoa_gateway",
 		Subsystem: "api",
 		Name:      "tenants_skipped_invalid_configuration_total",
 		Help:      "The number of tenants which have not been configured due to an invalid configuration.",
@@ -420,7 +420,7 @@ func main() {
 		}
 	}
 
-	level.Info(logger).Log("msg", "starting observatorium")
+	level.Info(logger).Log("msg", "starting mcoa gateway")
 
 	var g run.Group
 	{
@@ -869,7 +869,7 @@ func main() {
 	}
 	{
 		h := internalserver.NewHandler(
-			internalserver.WithName("Internal - Observatorium API"),
+			internalserver.WithName("Internal - MCOA Gateway"),
 			internalserver.WithHealthchecks(healthchecks),
 			internalserver.WithPrometheusRegistry(reg),
 			internalserver.WithPProf(),
@@ -1010,7 +1010,7 @@ func parseFlags() (config, error) {
 	cfg := config{}
 	flag.StringVar(&cfg.tenantsConfigPath, "tenants.config", "tenants.yaml",
 		"Path to the tenants configuration file (for authenticators and rate limits).")
-	flag.StringVar(&cfg.debug.name, "debug.name", "observatorium",
+	flag.StringVar(&cfg.debug.name, "debug.name", "mcoa_gateway",
 		"A name to add as a prefix to log lines.")
 	flag.IntVar(&cfg.debug.mutexProfileFraction, "debug.mutex-profile-fraction", 10,
 		"The percentage of mutex contention events that are reported in the mutex profile.")
@@ -1020,7 +1020,7 @@ func parseFlags() (config, error) {
 		"The log filtering level. Options: 'error', 'warn', 'info', 'debug'.")
 	flag.StringVar(&cfg.logFormat, "log.format", logger.LogFormatLogfmt,
 		"The log format to use. Options: 'logfmt', 'json'.")
-	flag.StringVar(&cfg.internalTracing.serviceName, "internal.tracing.service-name", "observatorium_api",
+	flag.StringVar(&cfg.internalTracing.serviceName, "internal.tracing.service-name", "mcoa_gateway",
 		"The service name to report to the tracing backend.")
 	flag.StringVar(&cfg.internalTracing.endpoint, "internal.tracing.otlp-http-endpoint", "",
 		"The full URL of OTLP/http endpoint e.g. http://otel-collector:4318. "+
@@ -1447,7 +1447,7 @@ func newGRPCServer(cfg *config, tenantHeader string, logger log.Logger, upstream
 		md, _ := metadata.FromIncomingContext(ctx)
 		outCtx := metadata.NewOutgoingContext(ctx, md.Copy())
 
-		// Observatorium API isn't providing a generic pass-through to any methods;
+		// MCOA Gateway isn't providing a generic pass-through to any methods;
 		// we only pass the methods we want to expose; currently this is just TraceService/Export
 		proxiedServer, ok := proxiedServers[fullMethodName]
 		if ok {

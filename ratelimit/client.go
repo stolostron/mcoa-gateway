@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/observatorium/api/ratelimit/gubernator"
+	"github.com/stolostron/mcoa-gateway/ratelimit/gubernator"
 )
 
 var ErrOverLimit = errors.New("over limit")

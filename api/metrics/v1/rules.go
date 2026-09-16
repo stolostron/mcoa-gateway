@@ -13,9 +13,9 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql/parser"
 
-	"github.com/observatorium/api/authentication"
-	"github.com/observatorium/api/httperr"
-	"github.com/observatorium/api/rules"
+	"github.com/stolostron/mcoa-gateway/authentication"
+	"github.com/stolostron/mcoa-gateway/httperr"
+	"github.com/stolostron/mcoa-gateway/rules"
 )
 
 var promQLParser = parser.NewParser(parser.Options{})

@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/observatorium/api/logger"
+	"github.com/stolostron/mcoa-gateway/logger"
 )
 
 func TestMapCurveNamesToIDs(t *testing.T) {

@@ -13,6 +13,7 @@
 
 observatorium
 observatorium-api
+mcoa-gateway
 tmp/
 examples/vendor
 vendor

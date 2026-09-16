@@ -27,8 +27,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/observatorium/api/httperr"
-	"github.com/observatorium/api/tracing"
+	"github.com/stolostron/mcoa-gateway/httperr"
+	"github.com/stolostron/mcoa-gateway/tracing"
 )
 
 // OIDCAuthenticatorType represents the oidc authentication provider type.

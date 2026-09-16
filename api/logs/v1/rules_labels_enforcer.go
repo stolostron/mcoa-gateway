@@ -9,9 +9,9 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 
-	"github.com/observatorium/api/authentication"
-	"github.com/observatorium/api/authorization"
-	"github.com/observatorium/api/httperr"
+	"github.com/stolostron/mcoa-gateway/authentication"
+	"github.com/stolostron/mcoa-gateway/authorization"
+	"github.com/stolostron/mcoa-gateway/httperr"
 )
 
 const labelsParam = "labels"

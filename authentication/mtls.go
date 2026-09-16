@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/observatorium/api/httperr"
+	"github.com/stolostron/mcoa-gateway/httperr"
 )
 
 // MTLSAuthenticatorType represents the mTLS authentication provider type.

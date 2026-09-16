@@ -8,8 +8,8 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 
-	"github.com/observatorium/api/authentication"
-	"github.com/observatorium/api/httperr"
+	"github.com/stolostron/mcoa-gateway/authentication"
+	"github.com/stolostron/mcoa-gateway/httperr"
 )
 
 // WithTenantLabel returns a middleware that converts tenant(s) from the request context

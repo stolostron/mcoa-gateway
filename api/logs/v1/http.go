@@ -13,9 +13,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
-	"github.com/observatorium/api/proxy"
-	"github.com/observatorium/api/tls"
-	"github.com/observatorium/api/tracing"
+	"github.com/stolostron/mcoa-gateway/proxy"
+	"github.com/stolostron/mcoa-gateway/tls"
+	"github.com/stolostron/mcoa-gateway/tracing"
 )
 
 const (

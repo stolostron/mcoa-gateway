@@ -14,8 +14,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/observatorium/api/authentication/openshift"
-	"github.com/observatorium/api/logger"
+	"github.com/stolostron/mcoa-gateway/authentication/openshift"
+	"github.com/stolostron/mcoa-gateway/logger"
 )
 
 // redirectTransport redirects all requests to the target host.

@@ -31,9 +31,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 
-	"github.com/observatorium/api/authentication/openshift"
-	"github.com/observatorium/api/httperr"
-	"github.com/observatorium/api/tracing"
+	"github.com/stolostron/mcoa-gateway/authentication/openshift"
+	"github.com/stolostron/mcoa-gateway/httperr"
+	"github.com/stolostron/mcoa-gateway/tracing"
 )
 
 const OpenShiftAuthenticatorType = "openshift"

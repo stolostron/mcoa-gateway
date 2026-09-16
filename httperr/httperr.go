@@ -12,7 +12,7 @@ func PrometheusAPIError(w http.ResponseWriter, errorMessage string, code int) {
 	w.WriteHeader(code)
 
 	// As per Prometheus HTTP API format: https://prometheus.io/docs/prometheus/latest/querying/api/#format-overview
-	res := map[string]string{"status": "error", "errorType": "observatorium-api", "error": errorMessage}
+	res := map[string]string{"status": "error", "errorType": "mcoa-gateway", "error": errorMessage}
 
 	if err := json.NewEncoder(w).Encode(res); err != nil {
 		log.Printf("failed to encode json: %v", err)

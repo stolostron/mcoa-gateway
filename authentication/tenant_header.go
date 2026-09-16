@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/observatorium/api/httperr"
+	"github.com/stolostron/mcoa-gateway/httperr"
 )
 
 var (
@@ -25,12 +25,12 @@ var (
 // This is designed for read-path authentication where clients (like Grafana) specify the tenant via headers.
 //
 // Supports multiple tenants in two ways:
-//   1. Multiple header values (recommended):
-//        X-Scope-OrgID: team-a
-//        X-Scope-OrgID: team-b
-//        X-Scope-OrgID: team-c
-//   2. Pipe-separated string (legacy, for backwards compatibility):
-//        X-Scope-OrgID: team-a|team-b|team-c
+//  1. Multiple header values (recommended):
+//     X-Scope-OrgID: team-a
+//     X-Scope-OrgID: team-b
+//     X-Scope-OrgID: team-c
+//  2. Pipe-separated string (legacy, for backwards compatibility):
+//     X-Scope-OrgID: team-a|team-b|team-c
 //
 // For example:
 //   - Loki uses "X-Scope-OrgID"

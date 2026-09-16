@@ -9,9 +9,9 @@ import (
 	"github.com/ghodss/yaml"
 	"github.com/go-chi/chi/v5"
 
-	"github.com/observatorium/api/authentication"
-	"github.com/observatorium/api/httperr"
-	"github.com/observatorium/api/rules"
+	"github.com/stolostron/mcoa-gateway/authentication"
+	"github.com/stolostron/mcoa-gateway/httperr"
+	"github.com/stolostron/mcoa-gateway/rules"
 )
 
 // WithEnforceTenantAsRuleNamespace returns a middleware that ensures that the
