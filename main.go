@@ -251,11 +251,9 @@ type tenant struct {
 	} `json:"authenticator"`
 
 	MTLS *struct {
-		RawCA  []byte `json:"ca"`
-		CAPath string `json:"caPath"`
-		cas    []*x509.Certificate
 		config map[string]interface{}
 	} `json:"mTLS"`
+
 	RateLimits []*struct {
 		Endpoint string   `json:"endpoint"`
 		Limit    int      `json:"limit"`
@@ -355,14 +353,8 @@ func main() {
 			}
 
 			if t.MTLS != nil {
-				mTLSConfig, err := unmarshalLegacyAuthenticatorConfig(t.MTLS)
-				if err != nil {
-					skip.Log("msg", "failed to unmarshal legacy mTLS config", "err", err, "tenant", t.Name)
-					skippedTenants.WithLabelValues(t.Name).Inc()
-					tenantsCfg.Tenants[i] = nil
-					continue
-				}
-				t.MTLS.config = mTLSConfig
+				// mTLS authenticator uses global CA (--tls.client-ca-file), no per-tenant config needed
+				t.MTLS.config = make(map[string]interface{})
 			}
 
 			if t.OpenShift != nil {
