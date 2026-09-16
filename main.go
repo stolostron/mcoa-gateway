@@ -132,6 +132,8 @@ type tlsConfig struct {
 	internalServerCertFile string
 	internalServerKeyFile  string
 
+	clientCAFile string
+
 	healthchecksServerCAFile string
 	healthchecksServerName   string
 }
@@ -776,6 +778,7 @@ func main() {
 			log.With(logger, "protocol", "HTTP"),
 			cfg.tls.serverCertFile,
 			cfg.tls.serverKeyFile,
+			cfg.tls.clientCAFile,
 			cfg.tls.minVersion,
 			cfg.tls.maxVersion,
 			cfg.tls.clientAuthType,
@@ -884,6 +887,7 @@ func main() {
 			log.With(logger, "protocol", "HTTP"),
 			cfg.tls.internalServerCertFile,
 			cfg.tls.internalServerKeyFile,
+			cfg.tls.clientCAFile,
 			cfg.tls.minVersion,
 			cfg.tls.maxVersion,
 			cfg.tls.clientAuthType,
@@ -1169,6 +1173,8 @@ func parseFlags() (config, error) {
 			" The list is a filter of allowed groups; crypto/tls chooses the preference order.")
 	flag.StringVar(&cfg.tls.clientAuthType, "tls.client-auth-type", "RequestClientCert",
 		"Policy for TLS client-side authentication. Values are from ClientAuthType constants in https://pkg.go.dev/crypto/tls#ClientAuthType")
+	flag.StringVar(&cfg.tls.clientCAFile, "tls.client-ca-file", "",
+		"File containing the CA certificate for verifying client certificates. Required when using RequireAndVerifyClientCert.")
 	flag.DurationVar(&cfg.tls.reloadInterval, "tls.reload-interval", time.Minute,
 		"The interval at which to watch for TLS certificate changes.")
 	flag.StringVar(&cfg.middleware.grpcRateLimiterAddress, "middleware.rate-limiter.grpc-address", "",
@@ -1478,6 +1484,7 @@ func newGRPCServer(cfg *config, tenantHeader string, logger log.Logger, upstream
 			log.With(logger, "protocol", "gRPC"),
 			cfg.tls.serverCertFile,
 			cfg.tls.serverKeyFile,
+			cfg.tls.clientCAFile,
 			cfg.tls.minVersion,
 			cfg.tls.maxVersion,
 			cfg.tls.clientAuthType,

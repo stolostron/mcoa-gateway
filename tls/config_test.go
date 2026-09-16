@@ -126,6 +126,7 @@ func TestNewServerConfigCurvePreferences(t *testing.T) {
 				l,
 				certPath,
 				keyPath,
+				"", // clientCAFile
 				"VersionTLS13",
 				"VersionTLS13",
 				"RequestClientCert",
