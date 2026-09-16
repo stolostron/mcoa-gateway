@@ -100,9 +100,16 @@ func combine(middlewares map[string][]middleware) func(next http.Handler) http.H
 				return
 			}
 
+			// Try specific tenant rate limits first
 			tms, ok := middlewares[tenant]
+
+			// If no tenant-specific rate limits, fall back to default tenant rate limits
 			if !ok {
-				// No rate limits configured for this tenant.
+				tms, ok = middlewares[authentication.DefaultTenantName]
+			}
+
+			if !ok {
+				// No rate limits configured for this tenant or default.
 				next.ServeHTTP(w, r)
 				return
 			}

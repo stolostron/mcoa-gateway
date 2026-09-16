@@ -1,0 +1,34 @@
+# Simplest Default Tenant Configuration
+#
+# This single entry provides:
+# 1. Authentication for ALL tenants (read access)
+# 2. Rate limiting for ALL tenants (write and read)
+#
+# Perfect for: 1000+ tenants, single OIDC provider, global rate limits
+
+tenants:
+  - name: __mcoa_default__
+
+    # OIDC authentication - applies to ALL tenants
+    # When user queries tenant-1, tenant-2, ..., tenant-1000
+    # All use this OIDC provider
+    oidc:
+      clientID: observatorium
+      clientSecret: changeme
+      issuerURL: https://auth.example.com
+      redirectURL: https://gateway.example.com/oidc/default/callback
+      usernameClaim: email
+
+    # Global rate limits - apply to ALL tenants
+    rateLimits:
+      # Write endpoints: 5000 requests/second total across all tenants
+      - endpoint: ".*receive.*|.*push.*"
+        limit: 5000
+        window: 1s
+        failOpen: true
+
+      # Read endpoints: 500 requests/second total across all tenants
+      - endpoint: ".*query.*"
+        limit: 500
+        window: 1s
+        failOpen: true

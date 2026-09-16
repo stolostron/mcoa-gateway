@@ -1,0 +1,46 @@
+# Example: Default Tenant Configuration
+#
+# This configuration allows thousands of tenants to write via mTLS
+# while providing read access through a single OIDC authenticator.
+#
+# Use case: Organization with 1000+ microservices, each writing metrics
+# Grafana dashboards can query any tenant with single OIDC login
+
+tenants:
+  - name: __mcoa_default__
+    # Default OIDC authenticator - used for ANY tenant not explicitly configured
+    oidc:
+      clientID: observatorium
+      clientSecret: changeme  # Store in environment variable
+      issuerURL: https://auth.example.com
+      redirectURL: https://gateway.example.com/oidc/default/callback
+      usernameClaim: email
+      groupClaim: groups
+
+    # Global rate limits - apply to ALL tenants by default
+    rateLimits:
+      # Write endpoints (Prometheus remote write, Loki push)
+      - endpoint: ".*receive.*|.*push.*"
+        limit: 5000       # 5000 requests per second
+        window: 1s
+        failOpen: true    # Allow requests if rate limiter fails
+        retryAfterMin: 10s
+        retryAfterMax: 5m
+
+      # Read endpoints (Prometheus/Loki queries)
+      - endpoint: ".*query.*|.*api/v1.*"
+        limit: 500        # 500 requests per second
+        window: 1s
+        failOpen: true
+
+  # Optional: Override for specific high-priority tenant
+  - name: critical-service
+    oidc:
+      clientID: observatorium
+      clientSecret: changeme
+      issuerURL: https://auth.example.com
+      redirectURL: https://gateway.example.com/oidc/critical-service/callback
+    rateLimits:
+      - endpoint: ".*"
+        limit: 50000      # 10x higher limit
+        window: 1s
