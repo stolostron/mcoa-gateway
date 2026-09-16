@@ -276,7 +276,7 @@ Tenants are configured via YAML file (`--tenants.config`).
 tenants:
   - name: __mcoa_default__
     oidc:
-      clientID: observatorium
+      clientID: mcoa
       clientSecret: secret
       issuerURL: https://auth.example.com
       redirectURL: https://gateway.example.com/oidc/__mcoa_default__/callback
@@ -298,7 +298,7 @@ tenants:
 - ✅ Global rate limit applies to all tenants
 - ✅ Override specific tenants if needed
 
-See [DEFAULT_TENANT_GUIDE.md](DEFAULT_TENANT_GUIDE.md) for complete documentation.
+**Best Practice:** Use `__mcoa_default__` for thousands of tenants instead of listing each one individually in tenants.yaml.
 
 #### When Tenant Configuration is Required
 
@@ -368,7 +368,7 @@ tenants:
 tenants:
   - name: tenant-alpha
     oidc:
-      clientID: observatorium
+      clientID: mcoa
       clientSecret: my-secret
       issuerURL: https://auth.example.com
       redirectURL: https://gateway.example.com/oidc/tenant-alpha/callback
@@ -396,7 +396,7 @@ tenants:
 tenants:
   - name: tenant-alpha
     oidc:  # Read path: OIDC
-      clientID: observatorium
+      clientID: mcoa
       clientSecret: secret
       issuerURL: https://auth.example.com
       redirectURL: https://gateway.example.com/oidc/tenant-alpha/callback
@@ -437,7 +437,7 @@ For production use with both ingestion and queries:
 tenants:
   - name: tenant-alpha
     oidc:  # Read authentication
-      clientID: observatorium
+      clientID: mcoa
       clientSecret: secret
       issuerURL: https://auth.example.com
       redirectURL: https://gateway.example.com/oidc/tenant-alpha/callback
@@ -470,7 +470,7 @@ For a gateway that only serves queries (data already in backends):
 tenants:
   - name: tenant-alpha
     oidc:
-      clientID: observatorium
+      clientID: mcoa
       issuerURL: https://auth.example.com
       redirectURL: https://gateway.example.com/oidc/tenant-alpha/callback
 ```
@@ -593,7 +593,7 @@ curl -X POST https://gateway:8080/api/metrics/v1/api/v1/receive \
 tenants:
   - name: tenant-alpha
     oidc:
-      clientID: observatorium
+      clientID: mcoa
       clientSecret: my-secret
       issuerURL: https://auth.example.com
       redirectURL: https://gateway.example.com/oidc/tenant-alpha/callback
@@ -632,7 +632,7 @@ tenants:
 tenants:
   - name: tenant-gamma
     openshift:
-      serviceAccount: observatorium
+      serviceAccount: mcoa-gateway
       kubeconfig: /etc/kubeconfig
 ```
 
@@ -995,7 +995,7 @@ openssl genrsa -out gateway-client.key 2048
 
 # Create CSR
 openssl req -new -key gateway-client.key -out gateway-client.csr \
-  -subj "/CN=observatorium-api/O=MyOrg"
+  -subj "/CN=mcoa-gateway/O=MyOrg"
 
 # Sign with your upstream CA (Thanos/Loki CA)
 openssl x509 -req -in gateway-client.csr \

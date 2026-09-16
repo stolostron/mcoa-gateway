@@ -13,10 +13,10 @@ tenants:
     # When user queries tenant-1, tenant-2, ..., tenant-1000
     # All use this OIDC provider
     oidc:
-      clientID: observatorium
+      clientID: mcoa
       clientSecret: changeme
       issuerURL: https://auth.example.com
-      redirectURL: https://gateway.example.com/oidc/default/callback
+      redirectURL: https://gateway.example.com/oidc/__mcoa_default__/callback
       usernameClaim: email
 
     # Global rate limits - apply to ALL tenants

@@ -10,10 +10,10 @@ tenants:
   - name: __mcoa_default__
     # Default OIDC authenticator - used for ANY tenant not explicitly configured
     oidc:
-      clientID: observatorium
+      clientID: mcoa
       clientSecret: changeme  # Store in environment variable
       issuerURL: https://auth.example.com
-      redirectURL: https://gateway.example.com/oidc/default/callback
+      redirectURL: https://gateway.example.com/oidc/__mcoa_default__/callback
       usernameClaim: email
       groupClaim: groups
 
@@ -36,7 +36,7 @@ tenants:
   # Optional: Override for specific high-priority tenant
   - name: critical-service
     oidc:
-      clientID: observatorium
+      clientID: mcoa
       clientSecret: changeme
       issuerURL: https://auth.example.com
       redirectURL: https://gateway.example.com/oidc/critical-service/callback
