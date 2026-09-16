@@ -11,10 +11,10 @@ metadata:
       == "main"
   creationTimestamp: null
   labels:
-    appstudio.openshift.io/application: mcoa-gateway
-    appstudio.openshift.io/component: mcoa-gateway
+    appstudio.openshift.io/application: release-acm-51
+    appstudio.openshift.io/component: mcoa-gateway-acm-51
     pipelines.appstudio.openshift.io/type: build
-  name: mcoa-gateway-on-push
+  name: mcoa-gateway-acm-51-on-push
   namespace: crt-redhat-acm-tenant
 spec:
   params:
@@ -23,7 +23,7 @@ spec:
     - name: revision
       value: '{{revision}}'
     - name: output-image
-      value: quay.io/redhat-user-workloads/crt-redhat-acm-tenant/mcoa-gateway:{{revision}}
+      value: quay.io/redhat-user-workloads/crt-redhat-acm-tenant/mcoa-gateway-acm-51:{{revision}}
     - name: build-platforms
       value:
         - linux/x86_64
@@ -50,7 +50,7 @@ spec:
       - name: pathInRepo
         value: pipelines/common.yaml
   taskRunTemplate:
-    serviceAccountName: build-pipeline-mcoa-gateway
+    serviceAccountName: build-pipeline-mcoa-gateway-acm-51
   workspaces:
     - name: git-auth
       secret:
