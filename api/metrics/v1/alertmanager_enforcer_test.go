@@ -10,7 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/alertmanager/api/v2/models"
 
-	"github.com/observatorium/api/authentication"
+	"github.com/stolostron/mcoa-gateway/authentication"
 )
 
 func TestHasMatcherForLabel(t *testing.T) {
@@ -124,7 +124,6 @@ func TestWithEnforceTenancyOnSilenceID(t *testing.T) {
 
 		r := chi.NewRouter()
 		r.Use(authentication.WithTenant)
-		r.Use(authentication.WithTenantID(map[string]string{tenantName: tenantID}))
 		r.With(WithEnforceTenancyOnSilenceID(label, upstreamURL, srv.Client().Transport)).Method(
 			http.MethodGet,
 			"/{tenant}/am/api/v2/silence/{silenceID}",
@@ -155,7 +154,7 @@ func TestWithEnforceTenancyOnSilenceID(t *testing.T) {
 			if r.Method == http.MethodGet && r.URL.Path == "/api/v2/silence/"+silID {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(silenceJSON(tenantID)))
+				_, _ = w.Write([]byte(silenceJSON(tenantName)))
 				return
 			}
 			http.NotFound(w, r)
@@ -185,7 +184,7 @@ func TestWithEnforceTenancyOnSilenceID(t *testing.T) {
 			case r.Method == http.MethodGet && r.URL.Path == "/api/v2/silence/"+silID:
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(silenceJSON(tenantID)))
+				_, _ = w.Write([]byte(silenceJSON(tenantName)))
 			case r.Method == http.MethodDelete && r.URL.Path == "/api/v2/silence/"+silID:
 				deleteCalled = true
 				w.WriteHeader(http.StatusOK)

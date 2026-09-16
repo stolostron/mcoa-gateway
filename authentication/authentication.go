@@ -10,7 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
 
-	"github.com/observatorium/api/httperr"
+	"github.com/stolostron/mcoa-gateway/httperr"
 )
 
 // providerFactories map is used for the providers' self-registration.
@@ -107,21 +107,43 @@ func (pm *ProviderManager) InitializeProvider(config map[string]interface{},
 }
 
 // Middleware returns an authentication middleware for a tenant.
+// If the tenant is not found, falls back to the "default" tenant if configured.
 func (pm *ProviderManager) Middlewares(tenant string) (Middleware, bool) {
 	pm.mtx.RLock()
-	mw, ok := pm.middlewares[tenant]
-	pm.mtx.RUnlock()
+	defer pm.mtx.RUnlock()
 
-	return mw, ok
+	// Try specific tenant first
+	if mw, ok := pm.middlewares[tenant]; ok {
+		return mw, true
+	}
+
+	// Fall back to default tenant if configured
+	if mw, ok := pm.middlewares[DefaultTenantName]; ok {
+		level.Debug(pm.logger).Log("msg", "using default tenant authenticator", "tenant", tenant, "default", DefaultTenantName)
+		return mw, true
+	}
+
+	return nil, false
 }
 
 // GRPCMiddlewares returns an authentication interceptor for a tenant.
+// If the tenant is not found, falls back to the "default" tenant if configured.
 func (pm *ProviderManager) GRPCMiddlewares(tenant string) (grpc.StreamServerInterceptor, bool) {
 	pm.mtx.RLock()
-	mw, ok := pm.gRPCInterceptors[tenant]
-	pm.mtx.RUnlock()
+	defer pm.mtx.RUnlock()
 
-	return mw, ok
+	// Try specific tenant first
+	if mw, ok := pm.gRPCInterceptors[tenant]; ok {
+		return mw, true
+	}
+
+	// Fall back to default tenant if configured
+	if mw, ok := pm.gRPCInterceptors[DefaultTenantName]; ok {
+		level.Debug(pm.logger).Log("msg", "using default tenant gRPC authenticator", "tenant", tenant, "default", DefaultTenantName)
+		return mw, true
+	}
+
+	return nil, false
 }
 
 // PatternHandler return an http.HandlerFunc for a corresponding pattern.

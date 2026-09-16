@@ -15,7 +15,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/prometheus/prometheus/model/labels"
 
-	"github.com/observatorium/api/authentication"
+	"github.com/stolostron/mcoa-gateway/authentication"
 )
 
 func TestFilterRules_WithPrometheusAPIRulesResponseBody(t *testing.T) {

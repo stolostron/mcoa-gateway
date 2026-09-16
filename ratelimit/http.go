@@ -14,12 +14,12 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 
-	"github.com/observatorium/api/authentication"
-	"github.com/observatorium/api/httperr"
+	"github.com/stolostron/mcoa-gateway/authentication"
+	"github.com/stolostron/mcoa-gateway/httperr"
 )
 
 const (
-	requestName    = "observatorium:tenant_per_endpoint"
+	requestName    = "mcoa_gateway:tenant_per_endpoint"
 	requestTimeout = time.Second * 2
 
 	headerKeyRemaining = "X-RateLimit-Remaining"
@@ -100,9 +100,16 @@ func combine(middlewares map[string][]middleware) func(next http.Handler) http.H
 				return
 			}
 
+			// Try specific tenant rate limits first
 			tms, ok := middlewares[tenant]
+
+			// If no tenant-specific rate limits, fall back to default tenant rate limits
 			if !ok {
-				// No rate limits configured for this tenant.
+				tms, ok = middlewares[authentication.DefaultTenantName]
+			}
+
+			if !ok {
+				// No rate limits configured for this tenant or default.
 				next.ServeHTTP(w, r)
 				return
 			}

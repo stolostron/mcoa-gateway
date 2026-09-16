@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/observatorium/api/logger"
+	"github.com/stolostron/mcoa-gateway/logger"
 )
 
 func TestMapCurveNamesToIDs(t *testing.T) {
@@ -126,6 +126,7 @@ func TestNewServerConfigCurvePreferences(t *testing.T) {
 				l,
 				certPath,
 				keyPath,
+				"", // clientCAFile
 				"VersionTLS13",
 				"VersionTLS13",
 				"RequestClientCert",

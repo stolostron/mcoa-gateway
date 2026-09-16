@@ -17,7 +17,7 @@ import (
 	commonv1 "github.com/grafana/tempo/pkg/tempopb/common/v1"
 	tracev1 "github.com/grafana/tempo/pkg/tempopb/trace/v1"
 
-	apilogsv1 "github.com/observatorium/api/api/logs/v1"
+	apilogsv1 "github.com/stolostron/mcoa-gateway/api/logs/v1"
 )
 
 const (

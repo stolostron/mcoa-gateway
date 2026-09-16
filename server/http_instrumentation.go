@@ -10,7 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 
-	"github.com/observatorium/api/authentication"
+	"github.com/stolostron/mcoa-gateway/authentication"
 )
 
 // httpMetricsCollector is responsible for collecting HTTP metrics with extra tenant labels.
@@ -112,7 +112,7 @@ func (m instrumentedHandlerFactory) NewHandler(extraLabels prometheus.Labels, ne
 			}
 		}
 
-		tenant, _ := authentication.GetTenantID(r.Context())
+		tenant, _ := authentication.GetTenant(r.Context())
 		m.metricsCollector.requestCounter.
 			MustCurryWith(requestLabels).
 			WithLabelValues(strconv.Itoa(rw.Status()), r.Method, tenant).

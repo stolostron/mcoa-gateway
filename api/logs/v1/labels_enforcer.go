@@ -10,9 +10,9 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 
-	"github.com/observatorium/api/authorization"
-	"github.com/observatorium/api/httperr"
-	logqlv2 "github.com/observatorium/api/logql/v2"
+	"github.com/stolostron/mcoa-gateway/authorization"
+	"github.com/stolostron/mcoa-gateway/httperr"
+	logqlv2 "github.com/stolostron/mcoa-gateway/logql/v2"
 )
 
 type AuthzResponseData struct {

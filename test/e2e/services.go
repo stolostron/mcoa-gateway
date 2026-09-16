@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	apiImage = "quay.io/observatorium/api:local_e2e_test" // Image that is built if you run `make container-test`.
+	apiImage = "quay.io/stolostron/mcoa-gateway:local_e2e_test" // Image that is built if you run `make container-test`.
 
 	thanosImage       = "quay.io/thanos/thanos:v0.40.1"
 	lokiImage         = "grafana/loki:2.9.17"
@@ -182,14 +182,14 @@ func startBaseServices(t *testing.T, e e2e.Environment) (
 	token string,
 	rateLimiterAddr string,
 ) {
-	createDexYAML(t, e, getContainerName(e, "dex"), getContainerName(e, "observatorium-api"))
+	createDexYAML(t, e, getContainerName(e, "dex"), getContainerName(e, "mcoa-gateway"))
 
 	dex = newDexService(e)
 	gubernator := newGubernatorService(e)
 	opa := newOPAService(e)
 	testutil.Ok(t, e2e.StartAndWaitReady(dex, gubernator, opa))
 
-	createTenantsYAML(t, e, dex.InternalEndpoint("https"), opa.InternalEndpoint("http"), getContainerName(e, "observatorium-api"))
+	createTenantsYAML(t, e, dex.InternalEndpoint("https"), opa.InternalEndpoint("http"), getContainerName(e, "mcoa-gateway"))
 
 	token, err := obtainToken(dex.Endpoint("https"), getContainerName(e, "dex"), getTLSClientConfig(t, e))
 	testutil.Ok(t, err)
@@ -542,10 +542,10 @@ func newObservatoriumAPIService(
 		args = append(args, "--traces.tempo.endpoint="+opts.tempoEndpoint)
 	}
 
-	return e2emon.AsInstrumented(e.Runnable("observatorium-api").WithPorts(ports).Init(
+	return e2emon.AsInstrumented(e.Runnable("mcoa-gateway").WithPorts(ports).Init(
 		e2e.StartOptions{
 			Image:     apiImage,
-			Command:   e2e.NewCommandWithoutEntrypoint("observatorium-api", args...),
+			Command:   e2e.NewCommandWithoutEntrypoint("mcoa-gateway", args...),
 			Readiness: e2e.NewHTTPReadinessProbe("http-internal", "/ready", 200, 200),
 			User:      strconv.Itoa(os.Getuid()),
 		}), "http-internal"), nil

@@ -21,8 +21,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	apilogsv1 "github.com/observatorium/api/api/logs/v1"
-	"github.com/observatorium/api/authorization"
+	apilogsv1 "github.com/stolostron/mcoa-gateway/api/logs/v1"
+	"github.com/stolostron/mcoa-gateway/authorization"
 )
 
 func TestForbidOtherAPIs(t *testing.T) {

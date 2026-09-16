@@ -9,9 +9,9 @@ import (
 	"github.com/ghodss/yaml"
 	"github.com/go-chi/chi/v5"
 
-	"github.com/observatorium/api/authentication"
-	"github.com/observatorium/api/httperr"
-	"github.com/observatorium/api/rules"
+	"github.com/stolostron/mcoa-gateway/authentication"
+	"github.com/stolostron/mcoa-gateway/httperr"
+	"github.com/stolostron/mcoa-gateway/rules"
 )
 
 // WithEnforceTenantAsRuleNamespace returns a middleware that ensures that the
@@ -55,9 +55,9 @@ func WithEnforceTenantAsRuleNamespace() func(http.Handler) http.Handler {
 func WithEnforceRuleLabels(tenantLabel string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			id, ok := authentication.GetTenantID(r.Context())
+			tenant, ok := authentication.GetTenant(r.Context())
 			if !ok {
-				httperr.PrometheusAPIError(w, "error finding tenant ID", http.StatusUnauthorized)
+				httperr.PrometheusAPIError(w, "error finding tenant", http.StatusUnauthorized)
 				return
 			}
 
@@ -69,7 +69,7 @@ func WithEnforceRuleLabels(tenantLabel string) func(http.Handler) http.Handler {
 				return
 			}
 
-			err = enforceLabelsInRules(&group, tenantLabel, id)
+			err = enforceLabelsInRules(&group, tenantLabel, tenant)
 			if err != nil {
 				httperr.PrometheusAPIError(w, "error enforing labels into rules", http.StatusInternalServerError)
 				return

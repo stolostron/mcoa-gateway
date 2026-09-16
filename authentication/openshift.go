@@ -31,9 +31,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 
-	"github.com/observatorium/api/authentication/openshift"
-	"github.com/observatorium/api/httperr"
-	"github.com/observatorium/api/tracing"
+	"github.com/stolostron/mcoa-gateway/authentication/openshift"
+	"github.com/stolostron/mcoa-gateway/httperr"
+	"github.com/stolostron/mcoa-gateway/tracing"
 )
 
 const OpenShiftAuthenticatorType = "openshift"
@@ -207,7 +207,7 @@ func newOpenshiftAuthenticator(c map[string]interface{}, tenant string,
 		cipher:        cipher,
 		client:        client,
 		config:        config,
-		cookieName:    fmt.Sprintf("observatorium_%s", tenant),
+		cookieName:    fmt.Sprintf("mcoa_gateway_%s", tenant),
 		oauthEnabled:  oauthEnabled,
 	}
 
@@ -383,7 +383,7 @@ func (a OpenShiftAuthenticator) openshiftCallbackHandler() http.HandlerFunc {
 			Groups:      res.User.GetGroups(),
 			AccessToken: encToken,
 			RegisteredClaims: jwt.RegisteredClaims{
-				Issuer:    "observatorium",
+				Issuer:    "mcoa-gateway",
 				ExpiresAt: jwt.NewNumericDate(expiry),
 				IssuedAt:  jwt.NewNumericDate(issueAt),
 				Subject:   res.User.GetName(),

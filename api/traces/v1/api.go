@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/observatorium/api/tls"
+	"github.com/stolostron/mcoa-gateway/tls"
 )
 
 // TraceRoute represents the fully-qualified gRPC method name for exporting a trace.

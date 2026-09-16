@@ -11,7 +11,7 @@ import (
 	"github.com/efficientgo/core/testutil"
 	"github.com/efficientgo/e2e"
 
-	"github.com/observatorium/api/ratelimit"
+	"github.com/stolostron/mcoa-gateway/ratelimit"
 )
 
 func TestRedisRateLimiter_GetRateLimits(t *testing.T) {

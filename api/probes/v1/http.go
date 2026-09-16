@@ -15,8 +15,8 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 
-	"github.com/observatorium/api/authentication"
-	"github.com/observatorium/api/tls"
+	"github.com/stolostron/mcoa-gateway/authentication"
+	"github.com/stolostron/mcoa-gateway/tls"
 )
 
 type handlerOptions struct {

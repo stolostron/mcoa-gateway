@@ -13,9 +13,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
-	"github.com/observatorium/api/proxy"
-	"github.com/observatorium/api/tls"
-	"github.com/observatorium/api/tracing"
+	"github.com/stolostron/mcoa-gateway/proxy"
+	"github.com/stolostron/mcoa-gateway/tls"
+	"github.com/stolostron/mcoa-gateway/tracing"
 )
 
 const (
@@ -272,10 +272,9 @@ func NewHandler(read, tail, write, rules *url.URL, rulesReadOnly bool, tlsOption
 			transport := otelhttp.NewTransport(t)
 
 			proxyPrometheusReadRules = &httputil.ReverseProxy{
-				Director:       middlewares,
-				ErrorLog:       logger,
-				Transport:      transport,
-				ModifyResponse: newModifyResponseProm(c.logger, c.rulesLabelFilters),
+				Director:  middlewares,
+				ErrorLog:  logger,
+				Transport: transport,
 			}
 			proxyRules = &httputil.ReverseProxy{
 				Director:  middlewares,

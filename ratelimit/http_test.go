@@ -14,9 +14,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/observatorium/api/authentication"
-	"github.com/observatorium/api/logger"
-	"github.com/observatorium/api/server"
+	"github.com/stolostron/mcoa-gateway/authentication"
+	"github.com/stolostron/mcoa-gateway/logger"
+	"github.com/stolostron/mcoa-gateway/server"
 )
 
 const (

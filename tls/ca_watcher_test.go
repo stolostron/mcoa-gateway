@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	certutil "k8s.io/client-go/util/cert"
 
-	"github.com/observatorium/api/logger"
+	"github.com/stolostron/mcoa-gateway/logger"
 )
 
 func TestCertWatcher(t *testing.T) {

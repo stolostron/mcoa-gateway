@@ -20,9 +20,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
-	"github.com/observatorium/api/authentication"
-	"github.com/observatorium/api/proxy"
-	"github.com/observatorium/api/tls"
+	"github.com/stolostron/mcoa-gateway/authentication"
+	"github.com/stolostron/mcoa-gateway/proxy"
+	"github.com/stolostron/mcoa-gateway/tls"
 )
 
 var baseTagRegexp = regexp.MustCompile(`<base +href="\/" +data-inject-target="BASE_URL" +\/>`)
@@ -36,7 +36,6 @@ type handlerConfiguration struct {
 	registry         *prometheus.Registry
 	instrument       handlerInstrumenter
 	spanRoutePrefix  string
-	enableRBAC       bool
 	readMiddlewares  []func(http.Handler) http.Handler
 	writeMiddlewares []func(http.Handler) http.Handler
 	tempoMiddlewares []func(http.Handler) http.Handler
@@ -91,13 +90,6 @@ func WithTempoMiddleware(m func(http.Handler) http.Handler) HandlerOption {
 func WithWriteMiddleware(m func(http.Handler) http.Handler) HandlerOption {
 	return func(h *handlerConfiguration) {
 		h.writeMiddlewares = append(h.writeMiddlewares, m)
-	}
-}
-
-// WithTempoEnableResponseQueryRBACFilter enables query RBAC.
-func WithTempoEnableResponseQueryRBACFilter(enableQueryRBAC bool) HandlerOption {
-	return func(h *handlerConfiguration) {
-		h.enableRBAC = enableQueryRBAC
 	}
 }
 
@@ -258,10 +250,6 @@ func NewV2Handler(read *url.URL, readTemplate string, tempo, writeOTLPHttp *url.
 			Director:  middlewares,
 			ErrorLog:  proxy.Logger(c.logger),
 			Transport: otelhttp.NewTransport(t),
-		}
-		if c.enableRBAC {
-			tempoProxyRead.Transport = decompressingTransport(tempoProxyRead.Transport)
-			tempoProxyRead.ModifyResponse = responseRBACModifier(c.logger)
 		}
 
 		r.Group(func(r chi.Router) {

@@ -12,9 +12,9 @@ import (
 	"github.com/prometheus-community/prom-label-proxy/injectproxy"
 	"github.com/prometheus/prometheus/model/labels"
 
-	"github.com/observatorium/api/authentication"
-	"github.com/observatorium/api/authorization"
-	"github.com/observatorium/api/httperr"
+	"github.com/stolostron/mcoa-gateway/authentication"
+	"github.com/stolostron/mcoa-gateway/authorization"
+	"github.com/stolostron/mcoa-gateway/httperr"
 )
 
 // WithEnforceTenancyOnQuery returns a middleware that ensures that every query has a tenant label enforced.
@@ -23,16 +23,16 @@ func WithEnforceTenancyOnQuery(tenantLabel, paramName string) func(http.Handler)
 		// Adapted from
 		// https://github.com/prometheus-community/prom-label-proxy/blob/952266db4e0b8ab66b690501e532eaef33300596/injectproxy/routes.go.
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			tenantID, ok := authentication.GetTenantID(r.Context())
+			tenant, ok := authentication.GetTenant(r.Context())
 			if !ok {
-				httperr.PrometheusAPIError(w, "error finding tenant ID", http.StatusInternalServerError)
+				httperr.PrometheusAPIError(w, "error finding tenant", http.StatusInternalServerError)
 				return
 			}
 
 			tenantMatcher := &labels.Matcher{
 				Name:  tenantLabel,
 				Type:  labels.MatchEqual,
-				Value: tenantID,
+				Value: tenant,
 			}
 			e := injectproxy.NewPromQLEnforcer(false, tenantMatcher)
 			// If we cannot enforce, don't continue.

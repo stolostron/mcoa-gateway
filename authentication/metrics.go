@@ -7,8 +7,8 @@ import (
 
 func RegisterTenantsFailingMetric(reg prometheus.Registerer) *prometheus.CounterVec {
 	return promauto.With(reg).NewCounterVec(prometheus.CounterOpts{
-		Namespace: "observatorium",
-		Subsystem: "api",
+		Namespace: "mcoa",
+		Subsystem: "gateway",
 		Name:      "tenants_failed_registrations_total",
 		Help:      "The number of failed provider instantiations.",
 	}, []string{"tenant", "provider"})

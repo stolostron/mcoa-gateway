@@ -10,9 +10,9 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 
-	"github.com/observatorium/api/authentication"
-	"github.com/observatorium/api/httperr"
-	"github.com/observatorium/api/proxy"
+	"github.com/stolostron/mcoa-gateway/authentication"
+	"github.com/stolostron/mcoa-gateway/httperr"
+	"github.com/stolostron/mcoa-gateway/proxy"
 )
 
 // PathsHandlerFunc lists all paths available from the provided routes.

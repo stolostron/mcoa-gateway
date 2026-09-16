@@ -19,7 +19,7 @@ import (
 
 	"github.com/efficientgo/core/testutil"
 	"github.com/efficientgo/e2e"
-	"github.com/observatorium/api/test/testtls"
+	"github.com/stolostron/mcoa-gateway/test/testtls"
 )
 
 // uniqueE2ENetworkName returns a Docker-valid e2e network name (≤16 chars, [-a-zA-Z0-9])
@@ -37,9 +37,9 @@ func prepareConfigsAndCerts(t *testing.T, e e2e.Environment) {
 		t,
 		testtls.GenerateCerts(
 			filepath.Join(e.SharedDir(), certsSharedDir),
-			getContainerName(e, "observatorium-api"),
+			getContainerName(e, "mcoa-gateway"),
 			[]string{
-				getContainerName(e, "observatorium-api"),
+				getContainerName(e, "mcoa-gateway"),
 				"127.0.0.1",
 				"host.docker.internal",
 			},

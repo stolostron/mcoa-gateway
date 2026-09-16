@@ -7,7 +7,7 @@ import (
 
 	"github.com/prometheus/prometheus/model/labels"
 
-	logqlv2 "github.com/observatorium/api/logql/v2"
+	logqlv2 "github.com/stolostron/mcoa-gateway/logql/v2"
 )
 
 func extractLogStreamSelectors(selectorNames map[string]bool, values url.Values, param string) (*SelectorsInfo, error) {
