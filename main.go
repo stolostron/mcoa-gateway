@@ -590,36 +590,17 @@ func main() {
 					metricsv1.WithRegistry(reg),
 					metricsv1.WithHandlerInstrumenter(instrumenter),
 					metricsv1.WithTenantLabel(cfg.metrics.tenantLabel),
-					// Write routes authenticate machines with mTLS and rate-limit the
-					// tenant extracted from the client certificate.
-					metricsv1.WithWriteMiddleware(authentication.WithMTLSTenantExtraction(logger, cfg.metrics.tenantHeader)),
-					metricsv1.WithWriteMiddleware(rateLimitMiddleware),
+					// The remote-write receive route authenticates machines with mTLS and
+					// rate-limits the tenant extracted from the client certificate.
+					metricsv1.WithReceiveMiddleware(authentication.WithMTLSTenantExtraction(logger, cfg.metrics.tenantHeader)),
+					metricsv1.WithReceiveMiddleware(rateLimitMiddleware),
 				}
 
-				for _, middleware := range metricsReadMiddlewares {
-					metricsHandlerOptions = append(metricsHandlerOptions,
-						metricsv1.WithQueryMiddleware(middleware),
-						metricsv1.WithReadMiddleware(middleware),
-						metricsv1.WithUIMiddleware(middleware),
-					)
-				}
-
-				// Query and matcher endpoints need the tenant-label matcher injected
-				// after the read middleware has put it in the request context.
 				metricsHandlerOptions = append(metricsHandlerOptions,
-					metricsv1.WithQueryMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
-					metricsv1.WithReadMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
-					metricsv1.WithAlertmanagerAlertsReadMiddleware(metricsReadMiddlewares...),
-					metricsv1.WithAlertmanagerSilenceReadMiddleware(metricsReadMiddlewares...),
-					metricsv1.WithAlertmanagerSilenceIDReadMiddleware(metricsReadMiddlewares...),
-					metricsv1.WithAlertmanagerSilenceWriteMiddleware(
-						authentication.WithMTLSTenantExtraction(logger, cfg.metrics.tenantHeader),
-						rateLimitMiddleware,
-					),
-					metricsv1.WithAlertmanagerSilenceIDWriteMiddleware(
-						authentication.WithMTLSTenantExtraction(logger, cfg.metrics.tenantHeader),
-						rateLimitMiddleware,
-					),
+					// Keep the pre-existing middleware behavior for all non-receive
+					// metrics routes, including rules and Alertmanager endpoints.
+					metricsv1.WithGlobalMiddleware(metricsReadMiddlewares...),
+					metricsv1.WithGlobalMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
 				)
 
 				r.Group(func(r chi.Router) {

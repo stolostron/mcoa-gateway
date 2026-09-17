@@ -56,6 +56,7 @@ type handlerConfiguration struct {
 	queryMiddlewares       []func(http.Handler) http.Handler
 	readMiddlewares        []func(http.Handler) http.Handler
 	uiMiddlewares          []func(http.Handler) http.Handler
+	receiveMiddlewares     []func(http.Handler) http.Handler
 	writeMiddlewares       []func(http.Handler) http.Handler
 	alertmanagerMiddleware alertmanagerMiddleware
 }
@@ -116,6 +117,13 @@ func WithUIMiddleware(m func(http.Handler) http.Handler) HandlerOption {
 func WithWriteMiddleware(m func(http.Handler) http.Handler) HandlerOption {
 	return func(h *handlerConfiguration) {
 		h.writeMiddlewares = append(h.writeMiddlewares, m)
+	}
+}
+
+// WithReceiveMiddleware adds a middleware for Prometheus remote-write receive operations.
+func WithReceiveMiddleware(m func(http.Handler) http.Handler) HandlerOption {
+	return func(h *handlerConfiguration) {
+		h.receiveMiddlewares = append(h.receiveMiddlewares, m)
 	}
 }
 
@@ -375,7 +383,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 					handler,
 				)
 			})
-			r.Use(c.writeMiddlewares...)
+			r.Use(c.receiveMiddlewares...)
 			r.Use(server.StripTenantPrefix("/api/metrics/v1"))
 			r.Handle(ReceiveRoute, proxyWrite)
 		})
