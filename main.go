@@ -569,32 +569,11 @@ func main() {
 					rateLimitMiddleware = ratelimit.WithSharedRateLimiter(logger, rateLimitClient, rateLimits...)
 				}
 
-				// Metrics WRITE endpoints (without tenant in path, mTLS auth only)
-				if cfg.metrics.writeEndpoint != nil {
-					writeEps := metricsv1.Endpoints{
-						WriteEndpoint: cfg.metrics.writeEndpoint,
-					}
-
-					r.Group(func(r chi.Router) {
-						r.Use(middleware.Timeout(cfg.metrics.upstreamWriteTimeout))
-						// Extract tenant from mTLS certificate OU
-						r.Use(authentication.WithMTLSTenantExtraction(logger, cfg.metrics.tenantHeader))
-						r.Use(rateLimitMiddleware)
-
-						r.Mount("/api/metrics/v1", metricsv1.NewHandler(
-							writeEps,
-							metricsUpstreamClientOptions,
-							metricsv1.WithLogger(logger),
-							metricsv1.WithRegistry(reg),
-							metricsv1.WithHandlerInstrumenter(instrumenter),
-							metricsv1.WithTenantLabel(cfg.metrics.tenantLabel),
-						))
-					})
-				}
-
-				// Metrics READ endpoints (with tenant in path, SSO or mTLS auth, no RBAC)
-				readEps := metricsv1.Endpoints{
+				// One metrics router owns /api/metrics/v1. Its individual routes use
+				// the appropriate read or write middleware below.
+				metricsEndpoints := metricsv1.Endpoints{
 					ReadEndpoint:         cfg.metrics.readEndpoint,
+					WriteEndpoint:        cfg.metrics.writeEndpoint,
 					RulesEndpoint:        cfg.metrics.rulesEndpoint,
 					AlertmanagerEndpoint: cfg.metrics.alertmanagerEndpoint,
 				}
@@ -605,6 +584,43 @@ func main() {
 					authorization.WithTenantLabel(cfg.metrics.tenantLabel),
 					rateLimitMiddleware,
 				}
+
+				metricsHandlerOptions := []metricsv1.HandlerOption{
+					metricsv1.WithLogger(logger),
+					metricsv1.WithRegistry(reg),
+					metricsv1.WithHandlerInstrumenter(instrumenter),
+					metricsv1.WithTenantLabel(cfg.metrics.tenantLabel),
+					// Write routes authenticate machines with mTLS and rate-limit the
+					// tenant extracted from the client certificate.
+					metricsv1.WithWriteMiddleware(authentication.WithMTLSTenantExtraction(logger, cfg.metrics.tenantHeader)),
+					metricsv1.WithWriteMiddleware(rateLimitMiddleware),
+				}
+
+				for _, middleware := range metricsReadMiddlewares {
+					metricsHandlerOptions = append(metricsHandlerOptions,
+						metricsv1.WithQueryMiddleware(middleware),
+						metricsv1.WithReadMiddleware(middleware),
+						metricsv1.WithUIMiddleware(middleware),
+					)
+				}
+
+				// Query and matcher endpoints need the tenant-label matcher injected
+				// after the read middleware has put it in the request context.
+				metricsHandlerOptions = append(metricsHandlerOptions,
+					metricsv1.WithQueryMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
+					metricsv1.WithReadMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
+					metricsv1.WithAlertmanagerAlertsReadMiddleware(metricsReadMiddlewares...),
+					metricsv1.WithAlertmanagerSilenceReadMiddleware(metricsReadMiddlewares...),
+					metricsv1.WithAlertmanagerSilenceIDReadMiddleware(metricsReadMiddlewares...),
+					metricsv1.WithAlertmanagerSilenceWriteMiddleware(
+						authentication.WithMTLSTenantExtraction(logger, cfg.metrics.tenantHeader),
+						rateLimitMiddleware,
+					),
+					metricsv1.WithAlertmanagerSilenceIDWriteMiddleware(
+						authentication.WithMTLSTenantExtraction(logger, cfg.metrics.tenantHeader),
+						rateLimitMiddleware,
+					),
+				)
 
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.Timeout(cfg.metrics.upstreamWriteTimeout))
@@ -660,18 +676,11 @@ func main() {
 						}
 					}
 
-					const matchParamName = "match[]"
 					r.Mount("/api/metrics/v1", metricsv1.NewHandler(
-						readEps,
+						metricsEndpoints,
 						metricsUpstreamClientOptions,
-						metricsv1.WithLogger(logger),
-						metricsv1.WithRegistry(reg),
-						metricsv1.WithHandlerInstrumenter(instrumenter),
-						metricsv1.WithTenantLabel(cfg.metrics.tenantLabel),
-						metricsv1.WithGlobalMiddleware(metricsReadMiddlewares...),
-						metricsv1.WithGlobalMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
-					),
-					)
+						metricsHandlerOptions...,
+					))
 				})
 			}
 
