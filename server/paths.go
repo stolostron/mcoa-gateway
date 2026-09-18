@@ -58,6 +58,14 @@ func StripTenantPrefix(prefix string) func(http.Handler) http.Handler {
 	}
 }
 
+func StripPrefix(prefix string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.StripPrefix(prefix, proxy.WithPrefix(prefix, next)).ServeHTTP(w, r)
+		})
+	}
+}
+
 func StripTenantPrefixWithSubRoute(prefix, route string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -463,16 +463,17 @@ func main() {
 			)
 		}
 
-		r := chi.NewRouter()
-		r.Use(middleware.RequestID)
-		r.Use(middleware.RealIP)
-		r.Use(middleware.Recoverer)
-		r.Use(middleware.StripSlashes)
+		// initalize new router
+		rootRouter := chi.NewRouter()
+		rootRouter.Use(middleware.RequestID)
+		rootRouter.Use(middleware.RealIP)
+		rootRouter.Use(middleware.Recoverer)
+		rootRouter.Use(middleware.StripSlashes)
 
 		// With default value of zero backlog concurrent requests crossing a rate-limit result in non-200 HTTP response.
-		r.Use(middleware.ThrottleBacklog(cfg.middleware.concurrentRequestLimit,
+		rootRouter.Use(middleware.ThrottleBacklog(cfg.middleware.concurrentRequestLimit,
 			cfg.middleware.backLogLimitConcurrentRequests, cfg.middleware.backLogDurationConcurrentRequests))
-		r.Use(server.Logger(logger))
+		rootRouter.Use(server.Logger(logger))
 
 		hardcodedLabels := []string{"group", "handler"}
 		instrumenter := server.NewInstrumentedHandlerFactory(reg, hardcodedLabels)
@@ -496,7 +497,7 @@ func main() {
 			tracesUpstreamTLSOptions     *tls.UpstreamOptions
 		)
 
-		r.Group(func(r chi.Router) {
+		rootRouter.Group(func(r chi.Router) {
 			// Set up common middleware before mounting authN routes.
 			r.Use(authentication.WithAccessToken())
 			r.MethodNotAllowed(blockNonDefinedMethods())
@@ -791,15 +792,15 @@ func main() {
 			})
 		}
 
-		r.Get("/openapi.yaml", func(w http.ResponseWriter, _ *http.Request) {
+		rootRouter.Get("/openapi.yaml", func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write(client.OpenAPISpecification)
 		})
-		r.Get("/", server.PathsHandlerFunc(logger, r.Routes()))
+		rootRouter.Get("/", server.PathsHandlerFunc(logger, rootRouter.Routes()))
 
 		s := http.Server{
 			Addr: cfg.server.listen,
 			// otel HTTP handler with global trace provider
-			Handler:           otelhttp.NewHandler(r, "api"),
+			Handler:           otelhttp.NewHandler(rootRouter, "api"),
 			TLSConfig:         tlsConfig,
 			ReadHeaderTimeout: cfg.server.readHeaderTimeout,
 			ReadTimeout:       cfg.server.readTimeout,

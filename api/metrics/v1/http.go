@@ -384,7 +384,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				)
 			})
 			r.Use(c.receiveMiddlewares...)
-			r.Use(server.StripTenantPrefix("/api/metrics/v1"))
+			r.Use(server.StripPrefix("/api/metrics/v1"))
 			r.Handle(ReceiveRoute, proxyWrite)
 		})
 	}
