@@ -56,7 +56,6 @@ type handlerConfiguration struct {
 	queryMiddlewares       []func(http.Handler) http.Handler
 	readMiddlewares        []func(http.Handler) http.Handler
 	uiMiddlewares          []func(http.Handler) http.Handler
-	receiveMiddlewares     []func(http.Handler) http.Handler
 	writeMiddlewares       []func(http.Handler) http.Handler
 	alertmanagerMiddleware alertmanagerMiddleware
 }
@@ -120,13 +119,6 @@ func WithWriteMiddleware(m func(http.Handler) http.Handler) HandlerOption {
 	}
 }
 
-// WithReceiveMiddleware adds a middleware for Prometheus remote-write receive operations.
-func WithReceiveMiddleware(m func(http.Handler) http.Handler) HandlerOption {
-	return func(h *handlerConfiguration) {
-		h.receiveMiddlewares = append(h.receiveMiddlewares, m)
-	}
-}
-
 func WithAlertmanagerAlertsReadMiddleware(m ...func(http.Handler) http.Handler) HandlerOption {
 	return func(h *handlerConfiguration) {
 		h.alertmanagerMiddleware.alertsReadMiddlewares = append(h.alertmanagerMiddleware.alertsReadMiddlewares, m...)
@@ -157,10 +149,9 @@ func WithAlertmanagerSilenceIDWriteMiddleware(m ...func(http.Handler) http.Handl
 	}
 }
 
-// WithGlobalMiddleware adds a middleware for all operations.
+// WithGlobalMiddleware adds a middleware for all operations, execpt the recieve and rules-raw write paths.
 func WithGlobalMiddleware(m ...func(http.Handler) http.Handler) HandlerOption {
 	return func(h *handlerConfiguration) {
-		h.writeMiddlewares = append(h.writeMiddlewares, m...)
 		h.uiMiddlewares = append(h.uiMiddlewares, m...)
 		h.queryMiddlewares = append(h.queryMiddlewares, m...)
 		h.readMiddlewares = append(h.readMiddlewares, m...)
@@ -238,7 +229,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				)
 			})
 			r.Use(c.queryMiddlewares...)
-			r.Use(server.StripTenantPrefix("/api/metrics/v1"))
+			r.Use(server.StripPrefix("/api/metrics/v1"))
 			r.Handle(QueryRoute, proxyQuery)
 		})
 		r.Group(func(r chi.Router) {
@@ -249,7 +240,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				)
 			})
 			r.Use(c.queryMiddlewares...)
-			r.Use(server.StripTenantPrefix("/api/metrics/v1"))
+			r.Use(server.StripPrefix("/api/metrics/v1"))
 			r.Handle(QueryRangeRoute, proxyQuery)
 		})
 
@@ -283,7 +274,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				)
 			})
 			r.Use(c.readMiddlewares...)
-			r.Use(server.StripTenantPrefix("/api/metrics/v1"))
+			r.Use(server.StripPrefix("/api/metrics/v1"))
 			r.Handle(SeriesRoute, proxyRead)
 		})
 		r.Group(func(r chi.Router) {
@@ -294,7 +285,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				)
 			})
 			r.Use(c.readMiddlewares...)
-			r.Use(server.StripTenantPrefix("/api/metrics/v1"))
+			r.Use(server.StripPrefix("/api/metrics/v1"))
 			r.Handle(LabelNamesRoute, proxyRead)
 		})
 		r.Group(func(r chi.Router) {
@@ -305,7 +296,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				)
 			})
 			r.Use(c.readMiddlewares...)
-			r.Use(server.StripTenantPrefix("/api/metrics/v1"))
+			r.Use(server.StripPrefix("/api/metrics/v1"))
 			r.Handle(LabelValuesRoute, proxyRead)
 		})
 
@@ -317,7 +308,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				)
 			})
 			r.Use(c.readMiddlewares...)
-			r.Use(server.StripTenantPrefix("/api/metrics/v1"))
+			r.Use(server.StripPrefix("/api/metrics/v1"))
 			// Thanos Query Rules API supports matchers from v0.25 so the WithEnforceTenancyOnMatchers
 			// middleware will not work here if prior versions are used.
 			r.Handle(RulesRoute, proxyRead)
@@ -348,7 +339,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				)
 			})
 			r.Use(c.uiMiddlewares...)
-			r.Use(server.StripTenantPrefix("/api/metrics/v1"))
+			r.Use(server.StripPrefix("/api/metrics/v1"))
 			r.Mount(UIRoute, uiProxy)
 		})
 	}
@@ -383,7 +374,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 					handler,
 				)
 			})
-			r.Use(c.receiveMiddlewares...)
+			r.Use(c.writeMiddlewares...)
 			r.Use(server.StripPrefix("/api/metrics/v1"))
 			r.Handle(ReceiveRoute, proxyWrite)
 		})
@@ -406,7 +397,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				)
 			})
 			r.Use(c.uiMiddlewares...)
-			r.Use(server.StripTenantPrefix("/api/metrics/v1"))
+			r.Use(server.StripPrefix("/api/metrics/v1"))
 			r.Method(http.MethodGet, RulesRawRoute, http.HandlerFunc(rh.get))
 		})
 
@@ -418,7 +409,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				)
 			})
 			r.Use(c.writeMiddlewares...)
-			r.Use(server.StripTenantPrefix("/api/metrics/v1"))
+			r.Use(server.StripPrefix("/api/metrics/v1"))
 			r.Method(http.MethodPut, RulesRawRoute, http.HandlerFunc(rh.put))
 		})
 	}
@@ -456,7 +447,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				)
 			})
 			r.Use(c.alertmanagerMiddleware.alertsReadMiddlewares...)
-			r.Use(server.StripTenantPrefixWithSubRoute("/api/metrics/v1", "/am"))
+			r.Use(server.StripPrefix("/api/metrics/v1/am"))
 
 			r.Method(http.MethodGet, AlertmanagerAlertsRoute, proxyAlertmanager)
 		})
@@ -469,7 +460,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				)
 			})
 			r.Use(c.alertmanagerMiddleware.silenceReadMiddlewares...)
-			r.Use(server.StripTenantPrefixWithSubRoute("/api/metrics/v1", "/am"))
+			r.Use(server.StripPrefix("/api/metrics/v1/am"))
 
 			r.Method(http.MethodGet, AlertmanagerSilencesRoute, proxyAlertmanager)
 		})
@@ -483,7 +474,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 			})
 			r.Use(c.alertmanagerMiddleware.silenceWriteMiddlewares...)
 			r.Use(WithEnforceTenancyOnSilenceMatchers(c.tenantLabel))
-			r.Use(server.StripTenantPrefixWithSubRoute("/api/metrics/v1", "/am"))
+			r.Use(server.StripPrefix("/api/metrics/v1/am"))
 
 			r.Method(http.MethodPost, AlertmanagerSilencesRoute, proxyAlertmanager)
 		})
@@ -504,7 +495,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 			})
 			r.Use(enforceTenancyOnSilenceID)
 			r.Use(c.alertmanagerMiddleware.silenceIDReadMiddlewares...)
-			r.Use(server.StripTenantPrefixWithSubRoute("/api/metrics/v1", "/am"))
+			r.Use(server.StripPrefix("/api/metrics/v1/am"))
 
 			r.Method(http.MethodGet, AlertmanagerSilenceRoute, proxyAlertmanager)
 		})
@@ -518,7 +509,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 			})
 			r.Use(enforceTenancyOnSilenceID)
 			r.Use(c.alertmanagerMiddleware.silenceIDWriteMiddlewares...)
-			r.Use(server.StripTenantPrefixWithSubRoute("/api/metrics/v1", "/am"))
+			r.Use(server.StripPrefix("/api/metrics/v1/am"))
 
 			r.Method(http.MethodDelete, AlertmanagerSilenceRoute, proxyAlertmanager)
 		})

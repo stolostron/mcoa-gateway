@@ -593,8 +593,8 @@ func main() {
 					metricsv1.WithTenantLabel(cfg.metrics.tenantLabel),
 					// The remote-write receive route authenticates machines with mTLS and
 					// rate-limits the tenant extracted from the client certificate.
-					metricsv1.WithReceiveMiddleware(authentication.WithMTLSTenantExtraction(logger, cfg.metrics.tenantHeader)),
-					metricsv1.WithReceiveMiddleware(rateLimitMiddleware),
+					metricsv1.WithWriteMiddleware(authentication.WithMTLSTenantExtraction(logger, cfg.metrics.tenantHeader)),
+					metricsv1.WithWriteMiddleware(rateLimitMiddleware),
 				}
 
 				metricsHandlerOptions = append(metricsHandlerOptions,
