@@ -463,16 +463,17 @@ func main() {
 			)
 		}
 
-		r := chi.NewRouter()
-		r.Use(middleware.RequestID)
-		r.Use(middleware.RealIP)
-		r.Use(middleware.Recoverer)
-		r.Use(middleware.StripSlashes)
+		// initalize new router
+		rootRouter := chi.NewRouter()
+		rootRouter.Use(middleware.RequestID)
+		rootRouter.Use(middleware.RealIP)
+		rootRouter.Use(middleware.Recoverer)
+		rootRouter.Use(middleware.StripSlashes)
 
 		// With default value of zero backlog concurrent requests crossing a rate-limit result in non-200 HTTP response.
-		r.Use(middleware.ThrottleBacklog(cfg.middleware.concurrentRequestLimit,
+		rootRouter.Use(middleware.ThrottleBacklog(cfg.middleware.concurrentRequestLimit,
 			cfg.middleware.backLogLimitConcurrentRequests, cfg.middleware.backLogDurationConcurrentRequests))
-		r.Use(server.Logger(logger))
+		rootRouter.Use(server.Logger(logger))
 
 		hardcodedLabels := []string{"group", "handler"}
 		instrumenter := server.NewInstrumentedHandlerFactory(reg, hardcodedLabels)
@@ -496,7 +497,7 @@ func main() {
 			tracesUpstreamTLSOptions     *tls.UpstreamOptions
 		)
 
-		r.Group(func(r chi.Router) {
+		rootRouter.Group(func(r chi.Router) {
 			// Set up common middleware before mounting authN routes.
 			r.Use(authentication.WithAccessToken())
 			r.MethodNotAllowed(blockNonDefinedMethods())
@@ -569,32 +570,11 @@ func main() {
 					rateLimitMiddleware = ratelimit.WithSharedRateLimiter(logger, rateLimitClient, rateLimits...)
 				}
 
-				// Metrics WRITE endpoints (without tenant in path, mTLS auth only)
-				if cfg.metrics.writeEndpoint != nil {
-					writeEps := metricsv1.Endpoints{
-						WriteEndpoint: cfg.metrics.writeEndpoint,
-					}
-
-					r.Group(func(r chi.Router) {
-						r.Use(middleware.Timeout(cfg.metrics.upstreamWriteTimeout))
-						// Extract tenant from mTLS certificate OU
-						r.Use(authentication.WithMTLSTenantExtraction(logger, cfg.metrics.tenantHeader))
-						r.Use(rateLimitMiddleware)
-
-						r.Mount("/api/metrics/v1", metricsv1.NewHandler(
-							writeEps,
-							metricsUpstreamClientOptions,
-							metricsv1.WithLogger(logger),
-							metricsv1.WithRegistry(reg),
-							metricsv1.WithHandlerInstrumenter(instrumenter),
-							metricsv1.WithTenantLabel(cfg.metrics.tenantLabel),
-						))
-					})
-				}
-
-				// Metrics READ endpoints (with tenant in path, SSO or mTLS auth, no RBAC)
-				readEps := metricsv1.Endpoints{
+				// One metrics router owns /api/metrics/v1. Its individual routes use
+				// the appropriate read or write middleware below.
+				metricsEndpoints := metricsv1.Endpoints{
 					ReadEndpoint:         cfg.metrics.readEndpoint,
+					WriteEndpoint:        cfg.metrics.writeEndpoint,
 					RulesEndpoint:        cfg.metrics.rulesEndpoint,
 					AlertmanagerEndpoint: cfg.metrics.alertmanagerEndpoint,
 				}
@@ -605,6 +585,24 @@ func main() {
 					authorization.WithTenantLabel(cfg.metrics.tenantLabel),
 					rateLimitMiddleware,
 				}
+
+				metricsHandlerOptions := []metricsv1.HandlerOption{
+					metricsv1.WithLogger(logger),
+					metricsv1.WithRegistry(reg),
+					metricsv1.WithHandlerInstrumenter(instrumenter),
+					metricsv1.WithTenantLabel(cfg.metrics.tenantLabel),
+					// The remote-write receive route authenticates machines with mTLS and
+					// rate-limits the tenant extracted from the client certificate.
+					metricsv1.WithWriteMiddleware(authentication.WithMTLSTenantExtraction(logger, cfg.metrics.tenantHeader)),
+					metricsv1.WithWriteMiddleware(rateLimitMiddleware),
+				}
+
+				metricsHandlerOptions = append(metricsHandlerOptions,
+					// Keep the pre-existing middleware behavior for all non-receive
+					// metrics routes, including rules and Alertmanager endpoints.
+					metricsv1.WithGlobalMiddleware(metricsReadMiddlewares...),
+					metricsv1.WithGlobalMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
+				)
 
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.Timeout(cfg.metrics.upstreamWriteTimeout))
@@ -660,18 +658,11 @@ func main() {
 						}
 					}
 
-					const matchParamName = "match[]"
 					r.Mount("/api/metrics/v1", metricsv1.NewHandler(
-						readEps,
+						metricsEndpoints,
 						metricsUpstreamClientOptions,
-						metricsv1.WithLogger(logger),
-						metricsv1.WithRegistry(reg),
-						metricsv1.WithHandlerInstrumenter(instrumenter),
-						metricsv1.WithTenantLabel(cfg.metrics.tenantLabel),
-						metricsv1.WithGlobalMiddleware(metricsReadMiddlewares...),
-						metricsv1.WithGlobalMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
-					),
-					)
+						metricsHandlerOptions...,
+					))
 				})
 			}
 
@@ -801,15 +792,15 @@ func main() {
 			})
 		}
 
-		r.Get("/openapi.yaml", func(w http.ResponseWriter, _ *http.Request) {
+		rootRouter.Get("/openapi.yaml", func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write(client.OpenAPISpecification)
 		})
-		r.Get("/", server.PathsHandlerFunc(logger, r.Routes()))
+		rootRouter.Get("/", server.PathsHandlerFunc(logger, rootRouter.Routes()))
 
 		s := http.Server{
 			Addr: cfg.server.listen,
 			// otel HTTP handler with global trace provider
-			Handler:           otelhttp.NewHandler(r, "api"),
+			Handler:           otelhttp.NewHandler(rootRouter, "api"),
 			TLSConfig:         tlsConfig,
 			ReadHeaderTimeout: cfg.server.readHeaderTimeout,
 			ReadTimeout:       cfg.server.readTimeout,

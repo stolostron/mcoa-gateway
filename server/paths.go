@@ -3,15 +3,11 @@ package server
 import (
 	"encoding/json"
 	"net/http"
-	"path"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 
-	"github.com/stolostron/mcoa-gateway/authentication"
-	"github.com/stolostron/mcoa-gateway/httperr"
 	"github.com/stolostron/mcoa-gateway/proxy"
 )
 
@@ -43,33 +39,10 @@ func PathsHandlerFunc(logger log.Logger, routes []chi.Route) http.HandlerFunc {
 	}
 }
 
-func StripTenantPrefix(prefix string) func(http.Handler) http.Handler {
+func StripPrefix(prefix string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			tenant, ok := authentication.GetTenant(r.Context())
-			if !ok {
-				httperr.PrometheusAPIError(w, "tenant not found", http.StatusInternalServerError)
-				return
-			}
-
-			tenantPrefix := path.Join("/", prefix, tenant)
-			http.StripPrefix(tenantPrefix, proxy.WithPrefix(tenantPrefix, next)).ServeHTTP(w, r)
-		})
-	}
-}
-
-func StripTenantPrefixWithSubRoute(prefix, route string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			tenant, ok := authentication.GetTenant(r.Context())
-			if !ok {
-				httperr.PrometheusAPIError(w, "tenant not found", http.StatusInternalServerError)
-				return
-			}
-
-			route = strings.TrimPrefix(route, "/")
-			tenantPrefix := path.Join("/", prefix, tenant, route)
-			http.StripPrefix(tenantPrefix, proxy.WithPrefix(tenantPrefix, next)).ServeHTTP(w, r)
+			http.StripPrefix(prefix, proxy.WithPrefix(prefix, next)).ServeHTTP(w, r)
 		})
 	}
 }
