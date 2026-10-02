@@ -136,6 +136,9 @@ type tlsConfig struct {
 
 	healthchecksServerCAFile string
 	healthchecksServerName   string
+
+	healthchecksClientCertFile string
+	healthchecksClientKeyFile  string
 }
 
 type metricsConfig struct {
@@ -449,6 +452,19 @@ func main() {
 				}
 				t.TLSClientConfig.RootCAs = x509.NewCertPool()
 				t.TLSClientConfig.RootCAs.AppendCertsFromPEM(caCert)
+			}
+
+			if cfg.tls.healthchecksClientCertFile != "" && cfg.tls.healthchecksClientKeyFile != "" {
+				clientCert, err := stdtls.LoadX509KeyPair(
+					cfg.tls.healthchecksClientCertFile,
+					cfg.tls.healthchecksClientKeyFile,
+				)
+				if err != nil {
+					stdlog.Fatalf("failed to load healthcheck client certificate: %v", err)
+				}
+				t.TLSClientConfig.Certificates = []stdtls.Certificate{clientCert}
+			} else if cfg.tls.healthchecksClientCertFile != "" || cfg.tls.healthchecksClientKeyFile != "" {
+				stdlog.Fatalf("both --tls.healthchecks.client-cert-file and --tls.healthchecks.client-key-file must be set together")
 			}
 
 			// checks if server is up
@@ -1139,6 +1155,13 @@ func parseFlags() (config, error) {
 	flag.StringVar(&cfg.tls.healthchecksServerName, "tls.healthchecks.server-name", "",
 		"Server name is used to verify the hostname of the certificates returned by the server."+
 			" If no server name is specified, the server name will be inferred from the healthcheck URL.")
+	flag.StringVar(&cfg.tls.healthchecksClientCertFile, "tls.healthchecks.client-cert-file", "",
+		"File containing the client certificate to present when the gateway performs its internal"+
+			" TLS healthcheck against --web.healthchecks.url. Required if the public listener's"+
+			" --tls.client-auth-type requires a client certificate (e.g. RequireAndVerifyClientCert"+
+			" or RequireAnyClientCert).")
+	flag.StringVar(&cfg.tls.healthchecksClientKeyFile, "tls.healthchecks.client-key-file", "",
+		"File containing the client private key matching --tls.healthchecks.client-cert-file.")
 	flag.StringVar(&cfg.tls.minVersion, "tls.min-version", "VersionTLS13",
 		"Minimum TLS version supported. Value must match version names from https://golang.org/pkg/crypto/tls/#pkg-constants.")
 	flag.StringVar(&cfg.tls.maxVersion, "tls.max-version", "VersionTLS13",
