@@ -162,6 +162,22 @@ func TestEnforceValuesOnQuery(t *testing.T) {
 			},
 		},
 		{
+			desc: "not-equal selector cannot drop tenant regex",
+			accessMatchers: []*labels.Matcher{
+				{
+					Type:  labels.MatchRegexp,
+					Name:  "tenant_id",
+					Value: "a|b",
+				},
+			},
+			urlValues: url.Values{
+				"query": []string{`{app="api", tenant_id!="a"}`},
+			},
+			expValues: url.Values{
+				"query": []string{`{app="api", tenant_id=~"a|b"}`},
+			},
+		},
+		{
 			desc: "logical OR with query parameter",
 			accessMatchers: []*labels.Matcher{
 				{
