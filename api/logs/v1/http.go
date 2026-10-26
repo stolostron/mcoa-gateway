@@ -23,6 +23,16 @@ const (
 	dialTimeout = 30 * time.Second // Set as in http.DefaultTransport
 )
 
+// Metric label keys and recurring values.
+const (
+	labelGroup   = "group"
+	labelHandler = "handler"
+	labelProxy   = "proxy"
+
+	groupLogsV1  = "logsv1"
+	handlerRules = "rules"
+)
+
 const (
 	labelRoute             = "/loki/api/v1/label"
 	labelsRoute            = "/loki/api/v1/labels"
@@ -168,7 +178,7 @@ func NewHandler(read, tail, write, rules *url.URL, rulesReadOnly bool, tlsOption
 				proxy.MiddlewareSetUpstream(read),
 				proxy.MiddlewareSetPrefixHeader(),
 				proxy.MiddlewareLogger(c.logger),
-				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{"proxy": "logsv1-read"}),
+				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{labelProxy: "logsv1-read"}),
 			)
 
 			t := &http.Transport{
@@ -179,7 +189,7 @@ func NewHandler(read, tail, write, rules *url.URL, rulesReadOnly bool, tlsOption
 			}
 
 			proxyRead = &httputil.ReverseProxy{
-				Director:  middlewares,
+				Director:  middlewares, //nolint:staticcheck // Rewrite is not behavior-compatible; see proxy.Middlewares.
 				ErrorLog:  proxy.Logger(c.logger),
 				Transport: otelhttp.NewTransport(t),
 			}
@@ -187,67 +197,67 @@ func NewHandler(read, tail, write, rules *url.URL, rulesReadOnly bool, tlsOption
 		r.Group(func(r chi.Router) {
 			r.Use(c.readMiddlewares...)
 			r.Handle(queryRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "query"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "query"},
 				proxyRead,
 			))
 			r.Handle(queryRangeRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "query_range"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "query_range"},
 				proxyRead,
 			))
 			r.Handle(labelRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "label"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "label"},
 				proxyRead,
 			))
 			r.Handle(labelsRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "labels"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "labels"},
 				proxyRead,
 			))
 			r.Handle(volumeRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "volume"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "volume"},
 				proxyRead,
 			))
 			r.Handle(volumeRangeRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "volume_range"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "volume_range"},
 				proxyRead,
 			))
 			r.Handle(labelValuesRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "label_values"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "label_values"},
 				proxyRead,
 			))
 			r.Handle(seriesRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "series"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "series"},
 				proxyRead,
 			))
 			r.Handle(promQueryRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "query"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "query"},
 				proxyRead,
 			))
 			r.Handle(promLabelRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "label"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "label"},
 				proxyRead,
 			))
 			r.Handle(promLabelValuesRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "label_values"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "label_values"},
 				proxyRead,
 			))
 			r.Handle(promSeriesRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "series"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "series"},
 				proxyRead,
 			))
 			r.Handle(patternsRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "patterns"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "patterns"},
 				proxyRead,
 			))
 			r.Handle(detectedLabelsRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "detected_labels"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "detected_labels"},
 				proxyRead,
 			))
 			r.Handle(detectedFieldRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "detected_field"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "detected_field"},
 				proxyRead,
 			))
 			r.Handle(detectedFieldsRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "detected_fields"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "detected_fields"},
 				proxyRead,
 			))
 		})
@@ -260,7 +270,7 @@ func NewHandler(read, tail, write, rules *url.URL, rulesReadOnly bool, tlsOption
 				proxy.MiddlewareSetUpstream(rules),
 				proxy.MiddlewareSetPrefixHeader(),
 				proxy.MiddlewareLogger(c.logger),
-				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{"proxy": "logsv1-rules"}),
+				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{labelProxy: "logsv1-rules"}),
 			)
 
 			logger := proxy.Logger(c.logger)
@@ -273,12 +283,12 @@ func NewHandler(read, tail, write, rules *url.URL, rulesReadOnly bool, tlsOption
 			transport := otelhttp.NewTransport(t)
 
 			proxyPrometheusReadRules = &httputil.ReverseProxy{
-				Director:  middlewares,
+				Director:  middlewares, //nolint:staticcheck // Rewrite is not behavior-compatible; see proxy.Middlewares.
 				ErrorLog:  logger,
 				Transport: transport,
 			}
 			proxyRules = &httputil.ReverseProxy{
-				Director:  middlewares,
+				Director:  middlewares, //nolint:staticcheck // Rewrite is not behavior-compatible; see proxy.Middlewares.
 				ErrorLog:  logger,
 				Transport: transport,
 			}
@@ -288,35 +298,35 @@ func NewHandler(read, tail, write, rules *url.URL, rulesReadOnly bool, tlsOption
 			r.Use(c.readMiddlewares...)
 			r.Use(c.rulesReadMiddlewares...)
 			r.Get(rulesRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "rules"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: handlerRules},
 				proxyRules,
 			))
 			r.Get(rulesPerNamespaceRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "rules"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: handlerRules},
 				proxyRules,
 			))
 			r.Get(rulesPerGroupNameRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "rules"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: handlerRules},
 				proxyRules,
 			))
 			r.Get(prometheusRulesRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "rules"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: handlerRules},
 				proxyPrometheusReadRules,
 			))
 			r.Get(prometheusAlertsRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "alerts"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "alerts"},
 				proxyPrometheusReadRules,
 			))
 			r.Get(promRulesRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "rules"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: handlerRules},
 				proxyRules,
 			))
 			r.Get(promRulesPerNamespaceRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "rules"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: handlerRules},
 				proxyRules,
 			))
 			r.Get(promRulesPerGroupNameRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "rules"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: handlerRules},
 				proxyRules,
 			))
 		})
@@ -326,28 +336,28 @@ func NewHandler(read, tail, write, rules *url.URL, rulesReadOnly bool, tlsOption
 				r.Use(c.writeMiddlewares...)
 				r.Use(c.rulesWriteMiddlewares...)
 				r.Post(rulesPerNamespaceRoute, c.instrument.NewHandler(
-					prometheus.Labels{"group": "logsv1", "handler": "rules"},
+					prometheus.Labels{labelGroup: groupLogsV1, labelHandler: handlerRules},
 					proxyRules,
 				))
 				r.Delete(rulesPerNamespaceRoute, c.instrument.NewHandler(
-					prometheus.Labels{"group": "logsv1", "handler": "rules"},
+					prometheus.Labels{labelGroup: groupLogsV1, labelHandler: handlerRules},
 					proxyRules,
 				))
 				r.Delete(rulesPerGroupNameRoute, c.instrument.NewHandler(
-					prometheus.Labels{"group": "logsv1", "handler": "rules"},
+					prometheus.Labels{labelGroup: groupLogsV1, labelHandler: handlerRules},
 					proxyRules,
 				))
 
 				r.Post(promRulesPerNamespaceRoute, c.instrument.NewHandler(
-					prometheus.Labels{"group": "logsv1", "handler": "rules"},
+					prometheus.Labels{labelGroup: groupLogsV1, labelHandler: handlerRules},
 					proxyRules,
 				))
 				r.Delete(promRulesPerNamespaceRoute, c.instrument.NewHandler(
-					prometheus.Labels{"group": "logsv1", "handler": "rules"},
+					prometheus.Labels{labelGroup: groupLogsV1, labelHandler: handlerRules},
 					proxyRules,
 				))
 				r.Delete(promRulesPerGroupNameRoute, c.instrument.NewHandler(
-					prometheus.Labels{"group": "logsv1", "handler": "rules"},
+					prometheus.Labels{labelGroup: groupLogsV1, labelHandler: handlerRules},
 					proxyRules,
 				))
 			})
@@ -361,7 +371,7 @@ func NewHandler(read, tail, write, rules *url.URL, rulesReadOnly bool, tlsOption
 				proxy.MiddlewareSetUpstream(tail),
 				proxy.MiddlewareSetPrefixHeader(),
 				proxy.MiddlewareLogger(c.logger),
-				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{"proxy": "logsv1-tail"}),
+				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{labelProxy: "logsv1-tail"}),
 			)
 
 			t := &http.Transport{
@@ -372,7 +382,7 @@ func NewHandler(read, tail, write, rules *url.URL, rulesReadOnly bool, tlsOption
 			}
 
 			tailRead = &httputil.ReverseProxy{
-				Director:  middlewares,
+				Director:  middlewares, //nolint:staticcheck // Rewrite is not behavior-compatible; see proxy.Middlewares.
 				ErrorLog:  proxy.Logger(c.logger),
 				Transport: t,
 			}
@@ -380,11 +390,11 @@ func NewHandler(read, tail, write, rules *url.URL, rulesReadOnly bool, tlsOption
 		r.Group(func(r chi.Router) {
 			r.Use(c.readMiddlewares...)
 			r.Handle(tailRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "tail"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "tail"},
 				tailRead,
 			))
 			r.Handle(promTailRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "prom_tail"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "prom_tail"},
 				tailRead,
 			))
 		})
@@ -397,7 +407,7 @@ func NewHandler(read, tail, write, rules *url.URL, rulesReadOnly bool, tlsOption
 				proxy.MiddlewareSetUpstream(write),
 				proxy.MiddlewareSetPrefixHeader(),
 				proxy.MiddlewareLogger(c.logger),
-				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{"proxy": "logsv1-write"}),
+				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{labelProxy: "logsv1-write"}),
 			)
 
 			t := &http.Transport{
@@ -408,7 +418,7 @@ func NewHandler(read, tail, write, rules *url.URL, rulesReadOnly bool, tlsOption
 			}
 
 			proxyWrite = &httputil.ReverseProxy{
-				Director:  middlewares,
+				Director:  middlewares, //nolint:staticcheck // Rewrite is not behavior-compatible; see proxy.Middlewares.
 				ErrorLog:  proxy.Logger(c.logger),
 				Transport: otelhttp.NewTransport(t),
 			}
@@ -417,11 +427,11 @@ func NewHandler(read, tail, write, rules *url.URL, rulesReadOnly bool, tlsOption
 			r.Use(c.writeMiddlewares...)
 			r.Use(server.StripPrefix("/api/logs/v1"))
 			r.Handle(otlpRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "otlp"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "otlp"},
 				proxyWrite,
 			))
 			r.Handle(pushRoute, c.instrument.NewHandler(
-				prometheus.Labels{"group": "logsv1", "handler": "push"},
+				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "push"},
 				proxyWrite,
 			))
 		})

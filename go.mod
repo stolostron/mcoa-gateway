@@ -1,6 +1,6 @@
 module github.com/stolostron/mcoa-gateway
 
-go 1.26.3
+go 1.26.10
 
 require (
 	github.com/brancz/kube-rbac-proxy v0.20.1

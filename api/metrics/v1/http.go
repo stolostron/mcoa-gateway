@@ -24,6 +24,15 @@ const (
 	dialTimeout = 30 * time.Second // Set as in http.DefaultTransport
 )
 
+// Metric label keys and recurring values.
+const (
+	labelGroup   = "group"
+	labelHandler = "handler"
+	labelProxy   = "proxy"
+
+	groupMetricsV1 = "metricsv1"
+)
+
 const (
 	UIRoute          = "/"
 	QueryRoute       = "/api/v1/query"
@@ -149,7 +158,7 @@ func WithAlertmanagerSilenceIDWriteMiddleware(m ...func(http.Handler) http.Handl
 	}
 }
 
-// WithGlobalMiddleware adds a middleware for all operations, execpt the recieve and rules-raw write paths.
+// WithGlobalMiddleware adds a middleware for all operations, execpt the receive and rules-raw write paths.
 func WithGlobalMiddleware(m ...func(http.Handler) http.Handler) HandlerOption {
 	return func(h *handlerConfiguration) {
 		h.uiMiddlewares = append(h.uiMiddlewares, m...)
@@ -206,11 +215,11 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				proxy.MiddlewareSetUpstream(endpoints.ReadEndpoint),
 				proxy.MiddlewareSetPrefixHeader(),
 				proxy.MiddlewareLogger(c.logger),
-				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{"proxy": "metricsv1-query"}),
+				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{labelProxy: "metricsv1-query"}),
 			)
 
 			proxyQuery = &httputil.ReverseProxy{
-				Director: middlewares,
+				Director: middlewares, //nolint:staticcheck // Rewrite is not behavior-compatible; see proxy.Middlewares.
 				ErrorLog: proxy.Logger(c.logger),
 				Transport: otelhttp.NewTransport(
 					&http.Transport{
@@ -224,7 +233,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 		r.Group(func(r chi.Router) {
 			r.Use(func(handler http.Handler) http.Handler {
 				return server.InjectLabelsCtx(
-					prometheus.Labels{"group": "metricsv1", "handler": "query"},
+					prometheus.Labels{labelGroup: groupMetricsV1, labelHandler: "query"},
 					handler,
 				)
 			})
@@ -235,7 +244,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 		r.Group(func(r chi.Router) {
 			r.Use(func(handler http.Handler) http.Handler {
 				return server.InjectLabelsCtx(
-					prometheus.Labels{"group": "metricsv1", "handler": "query_range"},
+					prometheus.Labels{labelGroup: groupMetricsV1, labelHandler: "query_range"},
 					handler,
 				)
 			})
@@ -250,7 +259,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				proxy.MiddlewareSetUpstream(endpoints.ReadEndpoint),
 				proxy.MiddlewareSetPrefixHeader(),
 				proxy.MiddlewareLogger(c.logger),
-				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{"proxy": "metricsv1-read"}),
+				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{labelProxy: "metricsv1-read"}),
 			)
 
 			t := &http.Transport{
@@ -261,7 +270,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 			}
 
 			proxyRead = &httputil.ReverseProxy{
-				Director:  middlewares,
+				Director:  middlewares, //nolint:staticcheck // Rewrite is not behavior-compatible; see proxy.Middlewares.
 				ErrorLog:  proxy.Logger(c.logger),
 				Transport: otelhttp.NewTransport(t),
 			}
@@ -269,7 +278,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 		r.Group(func(r chi.Router) {
 			r.Use(func(handler http.Handler) http.Handler {
 				return server.InjectLabelsCtx(
-					prometheus.Labels{"group": "metricsv1", "handler": "series"},
+					prometheus.Labels{labelGroup: groupMetricsV1, labelHandler: "series"},
 					handler,
 				)
 			})
@@ -280,7 +289,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 		r.Group(func(r chi.Router) {
 			r.Use(func(handler http.Handler) http.Handler {
 				return server.InjectLabelsCtx(
-					prometheus.Labels{"group": "metricsv1", "handler": "label_names"},
+					prometheus.Labels{labelGroup: groupMetricsV1, labelHandler: "label_names"},
 					handler,
 				)
 			})
@@ -291,7 +300,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 		r.Group(func(r chi.Router) {
 			r.Use(func(handler http.Handler) http.Handler {
 				return server.InjectLabelsCtx(
-					prometheus.Labels{"group": "metricsv1", "handler": "label_values"},
+					prometheus.Labels{labelGroup: groupMetricsV1, labelHandler: "label_values"},
 					handler,
 				)
 			})
@@ -303,7 +312,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 		r.Group(func(r chi.Router) {
 			r.Use(func(handler http.Handler) http.Handler {
 				return server.InjectLabelsCtx(
-					prometheus.Labels{"group": "metricsv1", "handler": "rules"},
+					prometheus.Labels{labelGroup: groupMetricsV1, labelHandler: "rules"},
 					handler,
 				)
 			})
@@ -320,21 +329,21 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				proxy.MiddlewareSetUpstream(endpoints.ReadEndpoint),
 				proxy.MiddlewareSetPrefixHeader(),
 				proxy.MiddlewareLogger(c.logger),
-				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{"proxy": "metricsv1-ui"}),
+				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{labelProxy: "metricsv1-ui"}),
 			)
 
 			t := http.DefaultTransport.(*http.Transport)
 			t.TLSClientConfig = tlsOptions.NewClientConfig()
 
 			uiProxy = &httputil.ReverseProxy{
-				Director:  middlewares,
+				Director:  middlewares, //nolint:staticcheck // Rewrite is not behavior-compatible; see proxy.Middlewares.
 				Transport: otelhttp.NewTransport(http.DefaultTransport),
 			}
 		}
 		r.Group(func(r chi.Router) {
 			r.Use(func(handler http.Handler) http.Handler {
 				return server.InjectLabelsCtx(
-					prometheus.Labels{"group": "metricsv1", "handler": "ui"},
+					prometheus.Labels{labelGroup: groupMetricsV1, labelHandler: "ui"},
 					handler,
 				)
 			})
@@ -351,7 +360,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				proxy.MiddlewareSetUpstream(endpoints.WriteEndpoint),
 				proxy.MiddlewareSetPrefixHeader(),
 				proxy.MiddlewareLogger(c.logger),
-				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{"proxy": "metricsv1-write"}),
+				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{labelProxy: "metricsv1-write"}),
 			)
 
 			t := &http.Transport{
@@ -362,7 +371,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 			}
 
 			proxyWrite = &httputil.ReverseProxy{
-				Director:  middlewares,
+				Director:  middlewares, //nolint:staticcheck // Rewrite is not behavior-compatible; see proxy.Middlewares.
 				ErrorLog:  proxy.Logger(c.logger),
 				Transport: otelhttp.NewTransport(t),
 			}
@@ -370,7 +379,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 		r.Group(func(r chi.Router) {
 			r.Use(func(handler http.Handler) http.Handler {
 				return server.InjectLabelsCtx(
-					prometheus.Labels{"group": "metricsv1", "handler": "receive"},
+					prometheus.Labels{labelGroup: groupMetricsV1, labelHandler: "receive"},
 					handler,
 				)
 			})
@@ -392,7 +401,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 		r.Group(func(r chi.Router) {
 			r.Use(func(handler http.Handler) http.Handler {
 				return server.InjectLabelsCtx(
-					prometheus.Labels{"group": "metricsv1", "handler": "rules"},
+					prometheus.Labels{labelGroup: groupMetricsV1, labelHandler: "rules"},
 					handler,
 				)
 			})
@@ -404,7 +413,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 		r.Group(func(r chi.Router) {
 			r.Use(func(handler http.Handler) http.Handler {
 				return server.InjectLabelsCtx(
-					prometheus.Labels{"group": "metricsv1", "handler": "rules-raw"},
+					prometheus.Labels{labelGroup: groupMetricsV1, labelHandler: "rules-raw"},
 					handler,
 				)
 			})
@@ -429,11 +438,11 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				proxy.MiddlewareSetUpstream(endpoints.AlertmanagerEndpoint),
 				proxy.MiddlewareSetPrefixHeader(),
 				proxy.MiddlewareLogger(c.logger),
-				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{"proxy": "alertmanagerv2"}),
+				proxy.MiddlewareMetrics(c.registry, prometheus.Labels{labelProxy: "alertmanagerv2"}),
 			)
 
 			proxyAlertmanager = &httputil.ReverseProxy{
-				Director:  middlewares,
+				Director:  middlewares, //nolint:staticcheck // Rewrite is not behavior-compatible; see proxy.Middlewares.
 				ErrorLog:  proxy.Logger(c.logger),
 				Transport: otelhttp.NewTransport(alertmanagerTransport),
 			}
@@ -442,7 +451,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 		r.Group(func(r chi.Router) {
 			r.Use(func(handler http.Handler) http.Handler {
 				return server.InjectLabelsCtx(
-					prometheus.Labels{"group": "metricsv1", "handler": "alerts"},
+					prometheus.Labels{labelGroup: groupMetricsV1, labelHandler: "alerts"},
 					handler,
 				)
 			})
@@ -455,7 +464,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 		r.Group(func(r chi.Router) {
 			r.Use(func(handler http.Handler) http.Handler {
 				return server.InjectLabelsCtx(
-					prometheus.Labels{"group": "metricsv1", "handler": "silences"},
+					prometheus.Labels{labelGroup: groupMetricsV1, labelHandler: "silences"},
 					handler,
 				)
 			})
@@ -468,7 +477,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 		r.Group(func(r chi.Router) {
 			r.Use(func(handler http.Handler) http.Handler {
 				return server.InjectLabelsCtx(
-					prometheus.Labels{"group": "metricsv1", "handler": "silences"},
+					prometheus.Labels{labelGroup: groupMetricsV1, labelHandler: "silences"},
 					handler,
 				)
 			})
@@ -489,7 +498,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 		r.Group(func(r chi.Router) {
 			r.Use(func(handler http.Handler) http.Handler {
 				return server.InjectLabelsCtx(
-					prometheus.Labels{"group": "metricsv1", "handler": "silence"},
+					prometheus.Labels{labelGroup: groupMetricsV1, labelHandler: "silence"},
 					handler,
 				)
 			})
@@ -503,7 +512,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 		r.Group(func(r chi.Router) {
 			r.Use(func(handler http.Handler) http.Handler {
 				return server.InjectLabelsCtx(
-					prometheus.Labels{"group": "metricsv1", "handler": "silence"},
+					prometheus.Labels{labelGroup: groupMetricsV1, labelHandler: "silence"},
 					handler,
 				)
 			})

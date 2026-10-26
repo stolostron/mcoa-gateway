@@ -1,7 +1,7 @@
 package authentication
 
 const (
-	// state is used for OIDC/OpenShift authentication flows
+	// state is used for OIDC/OpenShift authentication flows.
 	state = "I love MCOA Gateway"
 
 	// DefaultTenantName is the special tenant name used as a fallback authenticator

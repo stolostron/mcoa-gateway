@@ -376,7 +376,7 @@ func TestModifyResponse(t *testing.T) {
 	}
 
 	proxy := &httputil.ReverseProxy{
-		Director:       func(r *http.Request) {},
+		Rewrite:        func(r *httputil.ProxyRequest) {},
 		Transport:      staticResponseRoundTripper{res},
 		ModifyResponse: newModifyResponseProm(l, lk),
 	}

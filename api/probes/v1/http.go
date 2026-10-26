@@ -115,8 +115,9 @@ func NewHandler(downstream *url.URL, opts ...HandlerOption) (http.Handler, error
 	}
 
 	if options.tenantHeader != "" {
-		originalDirector := proxy.Director
-		proxy.Director = func(req *http.Request) {
+		// Rewrite is not behavior-compatible with Director; see proxy.Middlewares.
+		originalDirector := proxy.Director         //nolint:staticcheck
+		proxy.Director = func(req *http.Request) { //nolint:staticcheck
 			originalDirector(req)
 			tenant, ok := authentication.GetTenant(req.Context())
 			if !ok {

@@ -13,7 +13,7 @@ import (
 	"github.com/stolostron/mcoa-gateway/authentication"
 )
 
-// mockTenantHandler wraps a test handler with tenant context setup
+// mockTenantHandler wraps a test handler with tenant context setup.
 func mockTenantHandler(tenant string, testHandler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Set tenant as URL param (what authentication.WithTenant expects)

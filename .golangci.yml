@@ -28,6 +28,8 @@ linters:
       statements: 60
     goconst:
       min-occurrences: 5
+      # Test tables repeat fixture strings by design; naming them hurts readability.
+      ignore-tests: true
     lll:
       line-length: 160
     misspell:

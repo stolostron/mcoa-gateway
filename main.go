@@ -440,7 +440,7 @@ func main() {
 	}
 	{
 		if cfg.server.healthcheckURL != "" {
-			t := (http.DefaultTransport).(*http.Transport).Clone()
+			t := http.DefaultTransport.(*http.Transport).Clone()
 			t.TLSClientConfig = &stdtls.Config{
 				ServerName: cfg.tls.healthchecksServerName,
 			}
@@ -479,7 +479,7 @@ func main() {
 			)
 		}
 
-		// initalize new router
+		// initialize new router
 		rootRouter := chi.NewRouter()
 		rootRouter.Use(middleware.RequestID)
 		rootRouter.Use(middleware.RealIP)
@@ -1519,16 +1519,18 @@ var legacyMetricsGroup = []groupHandler{
 	{"metricslegacy", "query_range"},
 }
 
+const groupMetricsV1 = "metricsv1"
+
 var metricsV1Group = []groupHandler{
-	{"metricsv1", "ui"},
-	{"metricsv1", "query"},
-	{"metricsv1", "query_range"},
-	{"metricsv1", "series"},
-	{"metricsv1", "labels"},
-	{"metricsv1", "labelvalues"},
-	{"metricsv1", "receive"},
-	{"metricsv1", "rules"},
-	{"metricsv1", "rules-raw"},
-	{"metricsv1", "alerts"},
-	{"metricsv1", "silences"},
+	{groupMetricsV1, "ui"},
+	{groupMetricsV1, "query"},
+	{groupMetricsV1, "query_range"},
+	{groupMetricsV1, "series"},
+	{groupMetricsV1, "labels"},
+	{groupMetricsV1, "labelvalues"},
+	{groupMetricsV1, "receive"},
+	{groupMetricsV1, "rules"},
+	{groupMetricsV1, "rules-raw"},
+	{groupMetricsV1, "alerts"},
+	{groupMetricsV1, "silences"},
 }

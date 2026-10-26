@@ -31,6 +31,15 @@ const (
 	dialTimeout = 30 * time.Second // Set as in http.DefaultTransport
 )
 
+// Metric label keys and recurring values.
+const (
+	labelGroup   = "group"
+	labelHandler = "handler"
+	labelProxy   = "proxy"
+
+	groupTracesV1UI = "tracesv1ui"
+)
+
 type handlerConfiguration struct {
 	logger           log.Logger
 	registry         *prometheus.Registry
@@ -123,7 +132,7 @@ func NewV2Handler(read *url.URL, readTemplate string, tempo, writeOTLPHttp *url.
 
 	r := chi.NewRouter()
 
-	middlewareMetrics := proxy.MiddlewareMetrics(c.registry, prometheus.Labels{"proxy": "tracesv1-read"})
+	middlewareMetrics := proxy.MiddlewareMetrics(c.registry, prometheus.Labels{labelProxy: "tracesv1-read"})
 
 	if read != nil || readTemplate != "" {
 
@@ -153,7 +162,7 @@ func NewV2Handler(read *url.URL, readTemplate string, tempo, writeOTLPHttp *url.
 			}
 
 			proxyRead = &httputil.ReverseProxy{
-				Director:  middlewares,
+				Director:  middlewares, //nolint:staticcheck // Rewrite is not behavior-compatible; see proxy.Middlewares.
 				ErrorLog:  proxy.Logger(c.logger),
 				Transport: decompressingTransport(otelhttp.NewTransport(t)),
 
@@ -165,34 +174,34 @@ func NewV2Handler(read *url.URL, readTemplate string, tempo, writeOTLPHttp *url.
 		r.Group(func(r chi.Router) {
 			r.Use(c.readMiddlewares...)
 			r.Get("/api/traces*", c.instrument.NewHandler(
-				prometheus.Labels{"group": "tracesv1api", "handler": "traces"},
+				prometheus.Labels{labelGroup: "tracesv1api", labelHandler: "traces"},
 				proxyRead))
 			r.Get("/api/services*", c.instrument.NewHandler(
-				prometheus.Labels{"group": "tracesv1api", "handler": "services"},
+				prometheus.Labels{labelGroup: "tracesv1api", labelHandler: "services"},
 				proxyRead))
 			r.Get("/api/dependencies*", c.instrument.NewHandler(
-				prometheus.Labels{"group": "tracesv1api", "handler": "dependencies"},
+				prometheus.Labels{labelGroup: "tracesv1api", labelHandler: "dependencies"},
 				proxyRead))
 			r.Get("/api/metrics*", c.instrument.NewHandler(
-				prometheus.Labels{"group": "metricsv1api", "handler": "metrics"},
+				prometheus.Labels{labelGroup: "metricsv1api", labelHandler: "metrics"},
 				proxyRead))
 			r.Get("/static/*", c.instrument.NewHandler(
-				prometheus.Labels{"group": "tracesv1static", "handler": "ui"},
+				prometheus.Labels{labelGroup: "tracesv1static", labelHandler: "ui"},
 				proxyRead))
 			r.Get("/search*", c.instrument.NewHandler(
-				prometheus.Labels{"group": "tracesv1ui", "handler": "ui"},
+				prometheus.Labels{labelGroup: groupTracesV1UI, labelHandler: "ui"},
 				proxyRead))
 			r.Get("/trace/*", c.instrument.NewHandler(
-				prometheus.Labels{"group": "tracesv1ui", "handler": "ui"},
+				prometheus.Labels{labelGroup: groupTracesV1UI, labelHandler: "ui"},
 				proxyRead))
 			r.Get("/dependencies", c.instrument.NewHandler(
-				prometheus.Labels{"group": "tracesv1ui", "handler": "ui"},
+				prometheus.Labels{labelGroup: groupTracesV1UI, labelHandler: "ui"},
 				proxyRead))
 			r.Get("/monitor", c.instrument.NewHandler(
-				prometheus.Labels{"group": "tracesv1ui", "handler": "ui"},
+				prometheus.Labels{labelGroup: groupTracesV1UI, labelHandler: "ui"},
 				proxyRead))
 			r.Get("/favicon.ico", c.instrument.NewHandler(
-				prometheus.Labels{"group": "tracesv1ui", "handler": "ui"},
+				prometheus.Labels{labelGroup: groupTracesV1UI, labelHandler: "ui"},
 				proxyRead))
 		})
 	}
@@ -213,7 +222,7 @@ func NewV2Handler(read *url.URL, readTemplate string, tempo, writeOTLPHttp *url.
 		}
 
 		proxyOTLP := &httputil.ReverseProxy{
-			Director:  middlewares,
+			Director:  middlewares, //nolint:staticcheck // Rewrite is not behavior-compatible; see proxy.Middlewares.
 			ErrorLog:  proxy.Logger(c.logger),
 			Transport: otelhttp.NewTransport(t),
 		}
@@ -221,7 +230,7 @@ func NewV2Handler(read *url.URL, readTemplate string, tempo, writeOTLPHttp *url.
 		r.Group(func(r chi.Router) {
 			r.Use(c.writeMiddlewares...)
 			r.Post("/v1/traces", c.instrument.NewHandler(
-				prometheus.Labels{"group": "tracesotlphttpv1api", "handler": "traces"},
+				prometheus.Labels{labelGroup: "tracesotlphttpv1api", labelHandler: "traces"},
 				proxyOTLP))
 		})
 
@@ -247,7 +256,7 @@ func NewV2Handler(read *url.URL, readTemplate string, tempo, writeOTLPHttp *url.
 		)
 
 		tempoProxyRead := &httputil.ReverseProxy{
-			Director:  middlewares,
+			Director:  middlewares, //nolint:staticcheck // Rewrite is not behavior-compatible; see proxy.Middlewares.
 			ErrorLog:  proxy.Logger(c.logger),
 			Transport: otelhttp.NewTransport(t),
 		}
@@ -255,7 +264,7 @@ func NewV2Handler(read *url.URL, readTemplate string, tempo, writeOTLPHttp *url.
 		r.Group(func(r chi.Router) {
 			r.Use(c.tempoMiddlewares...)
 			r.Get("/tempo/api*", c.instrument.NewHandler(
-				prometheus.Labels{"group": "tracesv1api", "handler": "traces"},
+				prometheus.Labels{labelGroup: "tracesv1api", labelHandler: "traces"},
 				tempoProxyRead))
 		})
 	}

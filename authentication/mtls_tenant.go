@@ -30,7 +30,7 @@ func NewMTLSTenantExtractor(logger log.Logger, tenantHeader string) *MTLSTenantE
 // Middleware returns an HTTP middleware that:
 // 1. Requires a valid mTLS client certificate
 // 2. Extracts the tenant from the certificate's OU field
-// 3. Sets the tenant in request context and as a header for upstream forwarding
+// 3. Sets the tenant in request context and as a header for upstream forwarding.
 func (e *MTLSTenantExtractor) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

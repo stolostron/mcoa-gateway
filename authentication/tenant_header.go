@@ -11,13 +11,13 @@ import (
 )
 
 var (
-	// tenantNameRegex restricts tenant names to alphanumeric, underscore, and dash
+	// tenantNameRegex restricts tenant names to alphanumeric, underscore, and dash.
 	tenantNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
-	// maxTenantNameLength prevents abuse with very long tenant names
+	// maxTenantNameLength prevents abuse with very long tenant names.
 	maxTenantNameLength = 256
 
-	// maxTenants limits the number of tenants that can be queried simultaneously
+	// maxTenants limits the number of tenants that can be queried simultaneously.
 	maxTenants = 100
 )
 

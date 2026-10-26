@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// mockServerStream implements grpc.ServerStream for testing
+// mockServerStream implements grpc.ServerStream for testing.
 type mockServerStream struct {
 	grpc.ServerStream
 	ctx context.Context

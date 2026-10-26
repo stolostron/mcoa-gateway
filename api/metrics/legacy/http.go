@@ -127,7 +127,7 @@ func NewHandler(url *url.URL, tlsOptions *tls.UpstreamOptions, opts ...HandlerOp
 		}
 
 		legacyProxy = &httputil.ReverseProxy{
-			Director:  middlewares,
+			Director:  middlewares, //nolint:staticcheck // Rewrite is not behavior-compatible; see proxy.Middlewares.
 			ErrorLog:  proxy.Logger(c.logger),
 			Transport: otelhttp.NewTransport(t),
 		}

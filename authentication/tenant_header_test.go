@@ -183,7 +183,6 @@ func TestWithTenantFromHeader(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -222,7 +221,7 @@ func TestWithTenantFromHeader(t *testing.T) {
 
 			// Check status code
 			if rec.Code != tt.wantStatus {
-				t.Errorf("status code = %d, want %d, body = %s",					rec.Code, tt.wantStatus, rec.Body.String())
+				t.Errorf("status code = %d, want %d, body = %s", rec.Code, tt.wantStatus, rec.Body.String())
 			}
 
 			// Check tenant value if status is OK

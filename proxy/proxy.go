@@ -27,6 +27,16 @@ const (
 
 type Middleware func(r *http.Request)
 
+// Middlewares chains middlewares into a single function suitable for
+// httputil.ReverseProxy.Director.
+//
+// Director is deprecated in favor of Rewrite, but the two are not
+// interchangeable: on the Rewrite path net/http strips client-supplied
+// X-Forwarded-* headers, drops query parameters it cannot parse and no longer
+// appends to X-Forwarded-For unless ProxyRequest.SetXForwarded is called.
+// Switching would therefore change what upstreams observe, so call sites keep
+// using Director behind a //nolint:staticcheck until that migration is done
+// deliberately.
 func Middlewares(middlewares ...Middleware) func(r *http.Request) {
 	return func(r *http.Request) {
 		for _, m := range middlewares {
