@@ -1,8 +1,10 @@
-name: CI
+name: go
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+    tags:
   pull_request:
 
 concurrency:
@@ -15,52 +17,120 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    name: Go build
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Go
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - run: |
-          make build
-          git diff --exit-code
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/go/bin
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Build
+        run: make build
+
+      - name: Check work tree is clean
+        run: git diff --exit-code
+
+  unit:
+    runs-on: ubuntu-latest
+    name: Unit tests
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/go/bin
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Run unit tests
+        run: make test-unit
 
   lint:
     runs-on: ubuntu-latest
+    name: Linters (Static Analysis) for Go
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-      - run: make lint --always-make
+      - name: Checkout code
+        uses: actions/checkout@v7
 
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - name: Install Go
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - run: make test --always-make
 
-  test-e2e:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/cache@v5
         with:
-          go-version-file: go.mod
-      - run: make test-e2e
-        env:
-          OCI_BIN: docker
+          path: |
+            ~/.cache/go-build
+            ~/.cache/golangci-lint
+            ~/go/pkg/mod
+            ~/go/bin
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      # shellcheck is downloaded as a .tar.xz by the Makefile.
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get -y install xz-utils
+
+      - name: Format
+        run: make format
+
+      - name: Linting & vetting
+        run: make lint --always-make
 
   generate:
     runs-on: ubuntu-latest
+    name: Generated files are up to date
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Go
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - run: |
-          make generate validate --always-make
-          make proto
-          git diff --exit-code
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/go/bin
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get -y install unzip
+
+      - name: Check generated manifests and clients
+        run: make generate validate --always-make
+
+      - name: Check generated protobufs
+        run: make proto
+
+      - name: Check work tree is clean
+        run: git diff --exit-code
