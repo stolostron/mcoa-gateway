@@ -128,7 +128,6 @@ const (
 	// interval is reached.
 	//
 	// Given the following `Duration` values
-	//
 	//   0 = Minutes
 	//   1 = Hours
 	//   2 = Days
