@@ -14,6 +14,9 @@ import (
 	"github.com/stolostron/mcoa-gateway/logger"
 )
 
+// testTenantAlpha is a sample tenant name shared by the tests in this package.
+const testTenantAlpha = "team-alpha"
+
 type dummyAuthenticator struct {
 	tenant string
 	logger log.Logger

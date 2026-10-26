@@ -198,47 +198,48 @@ Navigate to `https://localhost:8080/api/metrics/v1/tenant-alpha/api/v1/query?que
 
 ### Server Configuration
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--web.listen` | `:8080` | Address to listen on for external HTTP/HTTPS |
-| `--grpc.listen` | (empty) | Address to listen on for gRPC (if enabled) |
-| `--web.internal.listen` | `:8081` | Address for internal/health endpoints |
-| `--web.healthchecks.url` | `http://localhost:8080` | URL for health checks |
-| `--log.level` | `info` | Log level (debug, info, warn, error) |
-| `--log.format` | `logfmt` | Log format (logfmt, json) |
-| `--tenants.config` | `tenants.yaml` | Path to tenant configuration file |
+| Flag                     | Default                 | Description                                  |
+|--------------------------|-------------------------|----------------------------------------------|
+| `--web.listen`           | `:8080`                 | Address to listen on for external HTTP/HTTPS |
+| `--grpc.listen`          | (empty)                 | Address to listen on for gRPC (if enabled)   |
+| `--web.internal.listen`  | `:8081`                 | Address for internal/health endpoints        |
+| `--web.healthchecks.url` | `http://localhost:8080` | URL for health checks                        |
+| `--log.level`            | `info`                  | Log level (debug, info, warn, error)         |
+| `--log.format`           | `logfmt`                | Log format (logfmt, json)                    |
+| `--tenants.config`       | `tenants.yaml`          | Path to tenant configuration file            |
 
 ### TLS Configuration
 
 #### Server TLS (Client → Gateway)
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--tls.server.cert-file` | (empty) | Server TLS certificate file |
-| `--tls.server.key-file` | (empty) | Server TLS private key file |
-| `--tls.min-version` | `VersionTLS13` | Minimum TLS version (VersionTLS10/11/12/13) |
-| `--tls.max-version` | `VersionTLS13` | Maximum TLS version |
-| `--tls.cipher-suites` | (default) | Comma-separated cipher suites |
-| `--tls.reload-interval` | `1m` | Certificate reload interval |
+| Flag                     | Default        | Description                                 |
+|--------------------------|----------------|---------------------------------------------|
+| `--tls.server.cert-file` | (empty)        | Server TLS certificate file                 |
+| `--tls.server.key-file`  | (empty)        | Server TLS private key file                 |
+| `--tls.min-version`      | `VersionTLS13` | Minimum TLS version (VersionTLS10/11/12/13) |
+| `--tls.max-version`      | `VersionTLS13` | Maximum TLS version                         |
+| `--tls.cipher-suites`    | (default)      | Comma-separated cipher suites               |
+| `--tls.reload-interval`  | `1m`           | Certificate reload interval                 |
 
 #### Client Certificate Verification (mTLS)
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--tls.client-ca-file` | (empty) | **CA certificate for verifying client certificates** |
-| `--tls.client-auth-type` | `RequestClientCert` | Client auth policy (see table below) |
+| Flag                     | Default             | Description                                          |
+|--------------------------|---------------------|------------------------------------------------------|
+| `--tls.client-ca-file`   | (empty)             | **CA certificate for verifying client certificates** |
+| `--tls.client-auth-type` | `RequestClientCert` | Client auth policy (see table below)                 |
 
 **Client Auth Types:**
 
-| Type | Client Cert Required? | Verified Against CA? | Use Case |
-|------|----------------------|---------------------|----------|
-| `NoClientCert` | ❌ No | N/A | No mTLS (HTTPS only) |
-| `RequestClientCert` | ⚠️ Optional | ❌ No | **Not recommended** |
-| `RequireAnyClientCert` | ✅ Yes | ❌ No | **Not recommended** |
-| `VerifyClientCertIfGiven` | ⚠️ Optional | ✅ Yes (if provided) | Optional mTLS |
-| `RequireAndVerifyClientCert` | ✅ Yes | ✅ Yes | **Recommended for mTLS** ✅ |
+| Type                         | Client Cert Required? | Verified Against CA? | Use Case                    |
+|------------------------------|-----------------------|----------------------|-----------------------------|
+| `NoClientCert`               | ❌ No                 | N/A                  | No mTLS (HTTPS only)        |
+| `RequestClientCert`          | ⚠️ Optional            | ❌ No                | **Not recommended**         |
+| `RequireAnyClientCert`       | ✅ Yes                | ❌ No                | **Not recommended**         |
+| `VerifyClientCertIfGiven`    | ⚠️ Optional            | ✅ Yes (if provided) | Optional mTLS               |
+| `RequireAndVerifyClientCert` | ✅ Yes                | ✅ Yes               | **Recommended for mTLS** ✅ |
 
 **For production mTLS, use:**
+
 ```bash
 --tls.client-auth-type=RequireAndVerifyClientCert \
 --tls.client-ca-file=/path/to/client-ca.crt
@@ -248,14 +249,15 @@ Navigate to `https://localhost:8080/api/metrics/v1/tenant-alpha/api/v1/query?que
 
 For each backend (metrics/logs/traces/probes):
 
-| Flag Pattern | Description |
-|--------------|-------------|
-| `--{backend}.tls.ca-file` | CA to verify upstream server certificates |
-| `--{backend}.tls.cert-file` | Client cert for mTLS to upstream |
-| `--{backend}.tls.key-file` | Client key for mTLS to upstream |
-| `--{backend}.tls.watch-certs` | Enable hot reload of upstream certs |
+| Flag Pattern                  | Description                               |
+|-------------------------------|-------------------------------------------|
+| `--{backend}.tls.ca-file`     | CA to verify upstream server certificates |
+| `--{backend}.tls.cert-file`   | Client cert for mTLS to upstream          |
+| `--{backend}.tls.key-file`    | Client key for mTLS to upstream           |
+| `--{backend}.tls.watch-certs` | Enable hot reload of upstream certs       |
 
 Example:
+
 ```bash
 --metrics.tls.ca-file=/etc/certs/thanos-ca.crt \
 --metrics.tls.cert-file=/etc/certs/gateway-client.crt \
@@ -314,12 +316,12 @@ tenants:
 
 **Summary:**
 
-| Use Case | Tenant Config Needed? | Why |
-|----------|----------------------|-----|
-| Write + Read (same tenants) | ✅ Yes, all tenants OR use `__mcoa_default__` | Each tenant needs authenticator OR use fallback |
-| Write only, with rate limits | ✅ Yes OR use `__mcoa_default__` with rate limits | Rate limits configured per tenant or globally |
-| Write only, no rate limits | ⚠️ Optional | Write uses global CA, but no queries possible |
-| **Thousands of tenants** | ✅ **Use `__mcoa_default__` tenant** | **One config entry handles all tenants** |
+| Use Case                     | Tenant Config Needed?                             | Why                                             |
+|------------------------------|---------------------------------------------------|-------------------------------------------------|
+| Write + Read (same tenants)  | ✅ Yes, all tenants OR use `__mcoa_default__`     | Each tenant needs authenticator OR use fallback |
+| Write only, with rate limits | ✅ Yes OR use `__mcoa_default__` with rate limits | Rate limits configured per tenant or globally   |
+| Write only, no rate limits   | ⚠️ Optional                                        | Write uses global CA, but no queries possible   |
+| **Thousands of tenants**     | ✅ **Use `__mcoa_default__` tenant**              | **One config entry handles all tenants**        |
 
 **Recommendation:**
 - **Any number of tenants**: Use `__mcoa_default__` tenant (see above)
@@ -364,6 +366,7 @@ tenants:
 #### Example Tenant Configurations
 
 **OIDC Tenant:**
+
 ```yaml
 tenants:
   - name: tenant-alpha
@@ -381,6 +384,7 @@ tenants:
 ```
 
 **mTLS Tenant:**
+
 ```yaml
 tenants:
   - name: tenant-beta
@@ -392,6 +396,7 @@ tenants:
 ```
 
 **Mixed Tenants:**
+
 ```yaml
 tenants:
   - name: tenant-alpha
@@ -490,38 +495,38 @@ tenants:
 
 #### Metrics (Thanos/Prometheus/Cortex)
 
-| Flag | Description |
-|------|-------------|
-| `--metrics.read.endpoint` | Read endpoint (Thanos Query, Prometheus) |
-| `--metrics.write.endpoint` | Write endpoint (Thanos Receive, Cortex) |
-| `--metrics.rules.endpoint` | Rules API endpoint |
-| `--metrics.alertmanager.endpoint` | Alertmanager API endpoint |
-| `--metrics.write-timeout` | Upstream write timeout (default: 5m) |
-| `--metrics.tenant-header` | Tenant header name (default: `THANOS-TENANT`) |
-| `--metrics.tenant-label` | Tenant label for filtering (default: `tenant_id`) |
+| Flag                              | Description                                       |
+|-----------------------------------|---------------------------------------------------|
+| `--metrics.read.endpoint`         | Read endpoint (Thanos Query, Prometheus)          |
+| `--metrics.write.endpoint`        | Write endpoint (Thanos Receive, Cortex)           |
+| `--metrics.rules.endpoint`        | Rules API endpoint                                |
+| `--metrics.alertmanager.endpoint` | Alertmanager API endpoint                         |
+| `--metrics.write-timeout`         | Upstream write timeout (default: 5m)              |
+| `--metrics.tenant-header`         | Tenant header name (default: `THANOS-TENANT`)     |
+| `--metrics.tenant-label`          | Tenant label for filtering (default: `tenant_id`) |
 
 #### Logs (Loki)
 
-| Flag | Description |
-|------|-------------|
-| `--logs.read.endpoint` | Read endpoint (Loki) |
-| `--logs.write.endpoint` | Write endpoint (Loki) |
-| `--logs.tail.endpoint` | Tail/streaming endpoint |
-| `--logs.rules.endpoint` | Rules API endpoint |
-| `--logs.write-timeout` | Upstream write timeout (default: 5m) |
-| `--logs.tenant-header` | Tenant header name (default: `X-Scope-OrgID`) |
+| Flag                        | Description                                   |
+|-----------------------------|-----------------------------------------------|
+| `--logs.read.endpoint`      | Read endpoint (Loki)                          |
+| `--logs.write.endpoint`     | Write endpoint (Loki)                         |
+| `--logs.tail.endpoint`      | Tail/streaming endpoint                       |
+| `--logs.rules.endpoint`     | Rules API endpoint                            |
+| `--logs.write-timeout`      | Upstream write timeout (default: 5m)          |
+| `--logs.tenant-header`      | Tenant header name (default: `X-Scope-OrgID`) |
 | `--logs.rules.tenant-label` | Tenant label for rules (default: `tenant_id`) |
 
 #### Traces (Tempo)
 
-| Flag | Description |
-|------|-------------|
-| `--traces.read.endpoint` | Read endpoint (Tempo) |
-| `--traces.write.otlpgrpc.endpoint` | OTLP gRPC write endpoint |
-| `--traces.write.otlphttp.endpoint` | OTLP HTTP write endpoint |
-| `--traces.write-timeout` | Upstream write timeout (default: 30s) |
-| `--traces.tenant-header` | Tenant header name (default: `X-Tenant`) |
-| `--traces.query-rbac` | Enable RBAC for queries (default: false) |
+| Flag                               | Description                              |
+|------------------------------------|------------------------------------------|
+| `--traces.read.endpoint`           | Read endpoint (Tempo)                    |
+| `--traces.write.otlpgrpc.endpoint` | OTLP gRPC write endpoint                 |
+| `--traces.write.otlphttp.endpoint` | OTLP HTTP write endpoint                 |
+| `--traces.write-timeout`           | Upstream write timeout (default: 30s)    |
+| `--traces.tenant-header`           | Tenant header name (default: `X-Tenant`) |
+| `--traces.query-rbac`              | Enable RBAC for queries (default: false) |
 
 ---
 
@@ -554,6 +559,7 @@ MCOA Gateway uses **different authentication models** for write and read paths.
 - `POST /api/traces/v1/traces` - OTLP traces
 
 **Example:**
+
 ```bash
 # Create client cert with OU=tenant-alpha
 openssl req -new -key client.key -out client.csr \
@@ -723,6 +729,7 @@ Configure via `--middleware.rate-limiter.*` flags:
 ### Example Configurations
 
 **Separate write/read limits:**
+
 ```yaml
 tenants:
   - name: tenant-alpha
@@ -737,6 +744,7 @@ tenants:
 ```
 
 **Per-endpoint limits:**
+
 ```yaml
 tenants:
   - name: tenant-beta
@@ -1005,17 +1013,17 @@ openssl x509 -req -in gateway-client.csr \
 
 ### Certificate Files Summary
 
-| File | Type | Location | Purpose |
-|------|------|----------|---------|
-| `server.crt` | Server cert | Gateway | Gateway's HTTPS certificate |
-| `server.key` | Private key | Gateway | Gateway's HTTPS private key |
-| `client-ca.crt` | CA cert | Gateway | Verify client certificates |
-| `client-ca.key` | CA key | **Secure storage** | Sign new client certs |
-| `tenant-*.crt` | Client cert | Clients | Client authentication |
-| `tenant-*.key` | Private key | Clients | Client authentication |
-| `gateway-client.crt` | Client cert | Gateway | Gateway→Backend mTLS |
-| `gateway-client.key` | Private key | Gateway | Gateway→Backend mTLS |
-| `thanos-ca.crt` | CA cert | Gateway | Verify Thanos server cert |
+| File                 | Type        | Location           | Purpose                     |
+|----------------------|-------------|--------------------|-----------------------------|
+| `server.crt`         | Server cert | Gateway            | Gateway's HTTPS certificate |
+| `server.key`         | Private key | Gateway            | Gateway's HTTPS private key |
+| `client-ca.crt`      | CA cert     | Gateway            | Verify client certificates  |
+| `client-ca.key`      | CA key      | **Secure storage** | Sign new client certs       |
+| `tenant-*.crt`       | Client cert | Clients            | Client authentication       |
+| `tenant-*.key`       | Private key | Clients            | Client authentication       |
+| `gateway-client.crt` | Client cert | Gateway            | Gateway→Backend mTLS        |
+| `gateway-client.key` | Private key | Gateway            | Gateway→Backend mTLS        |
+| `thanos-ca.crt`      | CA cert     | Gateway            | Verify Thanos server cert   |
 
 ### Certificate Rotation
 
@@ -1191,6 +1199,7 @@ make generate
 ### Common Issues
 
 **1. "no client certificate presented"**
+
 ```
 Problem: Client not sending certificate
 Solution: Add --cert and --key to curl command
@@ -1198,6 +1207,7 @@ Solution: Add --cert and --key to curl command
 ```
 
 **2. "TLS certificate verification failed"**
+
 ```
 Problem: Client certificate not signed by global CA
 Solution: Verify certificate chain:
@@ -1206,6 +1216,7 @@ Solution: Verify certificate chain:
 ```
 
 **3. "tenant not found in certificate OU"**
+
 ```
 Problem: Write path requires OU field in certificate
 Solution: Create certificate with OU field:
@@ -1213,6 +1224,7 @@ Solution: Create certificate with OU field:
 ```
 
 **4. "client authentication requires verification but no client CA file provided"**
+
 ```
 Problem: --tls.client-auth-type=RequireAndVerifyClientCert but no --tls.client-ca-file
 Solution: Provide CA file:
@@ -1220,6 +1232,7 @@ Solution: Provide CA file:
 ```
 
 **5. Rate limit "429 Too Many Requests"**
+
 ```
 Problem: Exceeded tenant rate limit
 Solution: Check Retry-After header
@@ -1249,11 +1262,13 @@ level=debug msg="rate limit exceeded" tenant=tenant-alpha endpoint=/api/metrics/
 ### Certificate Management
 
 1. **Protect CA private keys** - Store in secure location, use HSM for production
+
    ```bash
    chmod 400 client-ca.key
    ```
 
 2. **Use short-lived certificates** - Issue 30-day certs instead of 365-day
+
    ```bash
    -days 30
    ```
@@ -1261,6 +1276,7 @@ level=debug msg="rate limit exceeded" tenant=tenant-alpha endpoint=/api/metrics/
 3. **Automate rotation** - Use cert-manager or similar for automatic renewal
 
 4. **Monitor expiry** - Alert before certificates expire
+
    ```bash
    openssl x509 -in cert.crt -noout -enddate
    ```
@@ -1268,11 +1284,13 @@ level=debug msg="rate limit exceeded" tenant=tenant-alpha endpoint=/api/metrics/
 ### TLS Configuration
 
 1. **Use TLS 1.3** - Disable older versions
+
    ```bash
    --tls.min-version=VersionTLS13
    ```
 
 2. **Client certificate verification** - Always verify for write path
+
    ```bash
    --tls.client-auth-type=RequireAndVerifyClientCert
    ```

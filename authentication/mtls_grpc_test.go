@@ -35,7 +35,7 @@ func TestWithGRPCMTLSTenantExtraction(t *testing.T) {
 
 		cert := &x509.Certificate{
 			Subject: pkix.Name{
-				OrganizationalUnit: []string{"team-alpha"},
+				OrganizationalUnit: []string{testTenantAlpha},
 			},
 		}
 
@@ -71,13 +71,13 @@ func TestWithGRPCMTLSTenantExtraction(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if capturedTenant != "team-alpha" {
-			t.Errorf("expected tenant 'team-alpha', got '%s'", capturedTenant)
+		if capturedTenant != testTenantAlpha {
+			t.Errorf("expected tenant %q, got '%s'", testTenantAlpha, capturedTenant)
 		}
 
 		tenantValues := capturedMetadata.Get(tenantHeader)
-		if len(tenantValues) == 0 || tenantValues[0] != "team-alpha" {
-			t.Errorf("expected metadata tenant 'team-alpha', got %v", tenantValues)
+		if len(tenantValues) == 0 || tenantValues[0] != testTenantAlpha {
+			t.Errorf("expected metadata tenant %q, got %v", testTenantAlpha, tenantValues)
 		}
 	})
 

@@ -22,9 +22,9 @@ func TestWithTenantFromHeader(t *testing.T) {
 			name:         "valid single tenant from X-Scope-OrgID",
 			tenantHeader: "X-Scope-OrgID",
 			requestHeaders: map[string]string{
-				"X-Scope-OrgID": "team-alpha",
+				"X-Scope-OrgID": testTenantAlpha,
 			},
-			wantTenant: "team-alpha",
+			wantTenant: testTenantAlpha,
 			wantStatus: http.StatusOK,
 		},
 		{
@@ -242,7 +242,7 @@ func TestWithOptionalTenantFromHeader(t *testing.T) {
 		middleware := WithOptionalTenantFromHeader(tenantHeader)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/logs/v1/loki/api/v1/query", nil)
-		req.Header.Set(tenantHeader, "team-alpha")
+		req.Header.Set(tenantHeader, testTenantAlpha)
 
 		var capturedTenant string
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -260,8 +260,8 @@ func TestWithOptionalTenantFromHeader(t *testing.T) {
 			t.Errorf("expected status 200, got %d", rr.Code)
 		}
 
-		if capturedTenant != "team-alpha" {
-			t.Errorf("expected tenant 'team-alpha', got '%s'", capturedTenant)
+		if capturedTenant != testTenantAlpha {
+			t.Errorf("expected tenant %q, got '%s'", testTenantAlpha, capturedTenant)
 		}
 	})
 

@@ -14,7 +14,7 @@ import (
 )
 
 // mockTenantHandler wraps a test handler with tenant context setup
-func mockTenantHandler(t *testing.T, tenant string, testHandler http.Handler) http.Handler {
+func mockTenantHandler(tenant string, testHandler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Set tenant as URL param (what authentication.WithTenant expects)
 		rctx := chi.NewRouteContext()
@@ -41,7 +41,7 @@ func TestWithTenantLabel(t *testing.T) {
 		})
 
 		middleware := WithTenantLabel(tenantLabelName)
-		handler := mockTenantHandler(t, "team-alpha", middleware(innerHandler))
+		handler := mockTenantHandler("team-alpha", middleware(innerHandler))
 
 		req := httptest.NewRequest(http.MethodGet, "/api/logs/v1/query", nil)
 		rr := httptest.NewRecorder()
@@ -84,7 +84,7 @@ func TestWithTenantLabel(t *testing.T) {
 		})
 
 		middleware := WithTenantLabel(tenantLabelName)
-		handler := mockTenantHandler(t, "team-alpha|team-beta|team-gamma", middleware(innerHandler))
+		handler := mockTenantHandler("team-alpha|team-beta|team-gamma", middleware(innerHandler))
 
 		req := httptest.NewRequest(http.MethodGet, "/api/logs/v1/query", nil)
 		rr := httptest.NewRecorder()
@@ -141,14 +141,16 @@ func TestWithTenantLabel(t *testing.T) {
 		})
 
 		middleware := WithTenantLabel(tenantLabelName)
-		handler := mockTenantHandler(t, "tenant-a|tenant-b", middleware(innerHandler))
+		handler := mockTenantHandler("tenant-a|tenant-b", middleware(innerHandler))
 
 		req := httptest.NewRequest(http.MethodGet, "/api/logs/v1/query", nil)
 		rr := httptest.NewRecorder()
 		handler.ServeHTTP(rr, req)
 
 		var matchers []*labels.Matcher
-		json.Unmarshal([]byte(capturedData), &matchers)
+		if err := json.Unmarshal([]byte(capturedData), &matchers); err != nil {
+			t.Fatalf("failed to unmarshal matchers: %v", err)
+		}
 
 		if len(matchers) == 0 {
 			t.Fatal("expected matchers to be set")
@@ -172,14 +174,16 @@ func TestWithTenantLabel(t *testing.T) {
 		})
 
 		middleware := WithTenantLabel(customLabelName)
-		handler := mockTenantHandler(t, "my-tenant", middleware(innerHandler))
+		handler := mockTenantHandler("my-tenant", middleware(innerHandler))
 
 		req := httptest.NewRequest(http.MethodGet, "/api/metrics/v1/query", nil)
 		rr := httptest.NewRecorder()
 		handler.ServeHTTP(rr, req)
 
 		var matchers []*labels.Matcher
-		json.Unmarshal([]byte(capturedData), &matchers)
+		if err := json.Unmarshal([]byte(capturedData), &matchers); err != nil {
+			t.Fatalf("failed to unmarshal matchers: %v", err)
+		}
 
 		if len(matchers) == 0 {
 			t.Fatal("expected matchers to be set")

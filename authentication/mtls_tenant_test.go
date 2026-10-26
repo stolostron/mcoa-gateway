@@ -21,7 +21,7 @@ func TestWithMTLSTenantExtraction(t *testing.T) {
 		// Create a mock certificate with OU
 		cert := &x509.Certificate{
 			Subject: pkix.Name{
-				OrganizationalUnit: []string{"team-alpha", "other-ou"},
+				OrganizationalUnit: []string{testTenantAlpha, "other-ou"},
 			},
 		}
 
@@ -48,12 +48,12 @@ func TestWithMTLSTenantExtraction(t *testing.T) {
 			t.Errorf("expected status 200, got %d", rr.Code)
 		}
 
-		if capturedTenant != "team-alpha" {
-			t.Errorf("expected tenant 'team-alpha', got '%s'", capturedTenant)
+		if capturedTenant != testTenantAlpha {
+			t.Errorf("expected tenant %q, got '%s'", testTenantAlpha, capturedTenant)
 		}
 
-		if capturedHeader != "team-alpha" {
-			t.Errorf("expected header 'team-alpha', got '%s'", capturedHeader)
+		if capturedHeader != testTenantAlpha {
+			t.Errorf("expected header %q, got '%s'", testTenantAlpha, capturedHeader)
 		}
 	})
 

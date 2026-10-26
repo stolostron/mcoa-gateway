@@ -1,28 +1,12 @@
 package authorization
 
 import (
-	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/prometheus/prometheus/model/labels"
 
 	logqlv2 "github.com/stolostron/mcoa-gateway/logql/v2"
 )
-
-func extractLogStreamSelectors(selectorNames map[string]bool, values url.Values, param string) (*SelectorsInfo, error) {
-	value := values.Get(param)
-
-	selectors, hasWildcard, err := parseLogStreamSelectors(selectorNames, value)
-	if err != nil {
-		return nil, fmt.Errorf("error extracting selectors from %s %#q: %w", param, value, err)
-	}
-
-	return &SelectorsInfo{
-		Selectors:   selectors,
-		HasWildcard: hasWildcard,
-	}, nil
-}
 
 func parseLogStreamSelectors(selectorNames map[string]bool, query string) (map[string][]string, bool, error) {
 	expr, err := logqlv2.ParseExpr(query)
