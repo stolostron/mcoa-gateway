@@ -70,8 +70,7 @@ func WithTenantLabel(tenantLabelName string) func(http.Handler) http.Handler {
 				}
 			}
 
-			// Serialize matchers to JSON for label enforcers
-			matchersJSON, err := json.Marshal(matchers)
+			matchersJSON, err := json.Marshal(AuthzResponseData{Matchers: matchers})
 			if err != nil {
 				httperr.PrometheusAPIError(w, "error encoding tenant matchers", http.StatusInternalServerError)
 				return

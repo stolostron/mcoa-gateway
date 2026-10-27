@@ -692,6 +692,7 @@ func main() {
 						metricslegacy.WithRegistry(reg),
 						metricslegacy.WithHandlerInstrumenter(instrumenter),
 						metricslegacy.WithGlobalMiddleware(metricsReadMiddlewares...),
+						metricslegacy.WithGlobalMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
 					))
 
 					// enable probes if endpoint is provided.

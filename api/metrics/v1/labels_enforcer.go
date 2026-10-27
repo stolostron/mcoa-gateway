@@ -64,20 +64,33 @@ func WithEnforceAuthorizationLabels() func(http.Handler) http.Handler {
 				return
 			}
 
-			var lm []*labels.Matcher
-			if err := json.Unmarshal([]byte(data), &lm); err != nil {
+			var doc authorization.AuthzResponseData
+			if err := json.Unmarshal([]byte(data), &doc); err != nil {
 				httperr.PrometheusAPIError(w, "error parsing authorization label matcher", http.StatusInternalServerError)
 
 				return
 			}
 
-			e := injectproxy.NewPromQLEnforcer(false, lm...)
+			e := injectproxy.NewPromQLEnforcer(false, doc.Matchers...)
 			// If we cannot enforce, don't continue.
-			if ok := enforceRequestQueryLabels(e, "query", w, r); !ok {
+			if ok := enforceRequestQueryLabels(e, metricSelectorParam(r.URL.Path), w, r); !ok {
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+func metricSelectorParam(path string) string {
+	switch {
+	case strings.HasSuffix(path, "/series"),
+		strings.HasSuffix(path, "/labels"),
+		strings.HasSuffix(path, "/values"),
+		strings.HasSuffix(path, "/rules"),
+		strings.HasSuffix(path, "/federate"):
+		return "match[]"
+	default:
+		return "query"
 	}
 }
 

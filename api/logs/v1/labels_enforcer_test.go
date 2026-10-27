@@ -111,7 +111,9 @@ func TestEnforceValuesOnQuery(t *testing.T) {
 				},
 			},
 			urlValues: url.Values{},
-			expValues: url.Values{},
+			expValues: url.Values{
+				"query": []string{`{kubernetes_namespace_name=~"log-test-0"}`},
+			},
 		},
 		{
 			desc: "query with no matcher overlap",
@@ -232,12 +234,6 @@ func TestEnforceValuesOnQuery(t *testing.T) {
 
 			v, err := enforceValues(authzData, ou)
 			testutil.Ok(t, err)
-
-			if len(tc.urlValues.Encode()) == 0 {
-				// Url values are empty, non need to do more checks.
-				testutil.Equals(t, len(v), 0)
-				return
-			}
 
 			u, err := url.ParseQuery(v)
 			testutil.Ok(t, err)

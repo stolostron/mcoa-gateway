@@ -456,6 +456,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				)
 			})
 			r.Use(c.alertmanagerMiddleware.alertsReadMiddlewares...)
+			r.Use(WithEnforceTenancyOnFilter(c.tenantLabel))
 			r.Use(server.StripPrefix("/api/metrics/v1/am"))
 
 			r.Method(http.MethodGet, AlertmanagerAlertsRoute, proxyAlertmanager)
@@ -469,6 +470,7 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				)
 			})
 			r.Use(c.alertmanagerMiddleware.silenceReadMiddlewares...)
+			r.Use(WithEnforceTenancyOnFilter(c.tenantLabel))
 			r.Use(server.StripPrefix("/api/metrics/v1/am"))
 
 			r.Method(http.MethodGet, AlertmanagerSilencesRoute, proxyAlertmanager)
@@ -502,8 +504,8 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 					handler,
 				)
 			})
-			r.Use(enforceTenancyOnSilenceID)
 			r.Use(c.alertmanagerMiddleware.silenceIDReadMiddlewares...)
+			r.Use(enforceTenancyOnSilenceID)
 			r.Use(server.StripPrefix("/api/metrics/v1/am"))
 
 			r.Method(http.MethodGet, AlertmanagerSilenceRoute, proxyAlertmanager)
@@ -516,8 +518,8 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 					handler,
 				)
 			})
-			r.Use(enforceTenancyOnSilenceID)
 			r.Use(c.alertmanagerMiddleware.silenceIDWriteMiddlewares...)
+			r.Use(enforceTenancyOnSilenceID)
 			r.Use(server.StripPrefix("/api/metrics/v1/am"))
 
 			r.Method(http.MethodDelete, AlertmanagerSilenceRoute, proxyAlertmanager)

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -15,10 +17,7 @@ import (
 	logqlv2 "github.com/stolostron/mcoa-gateway/logql/v2"
 )
 
-type AuthzResponseData struct {
-	Matchers  []*labels.Matcher `json:"matchers,omitempty"`
-	MatcherOp string            `json:"matcherOp,omitempty"`
-}
+type AuthzResponseData = authorization.AuthzResponseData
 
 const (
 	logicalOr  = "or"
@@ -56,31 +55,53 @@ func WithEnforceAuthorizationLabels() func(http.Handler) http.Handler {
 			}
 			r = r.WithContext(context.WithValue(r.Context(), matchersContextKey{}, matchersInfo))
 
-			q, err := enforceValues(matchersInfo, r.URL)
-			if err != nil {
+			if err := enforceRequestLogQL(matchersInfo, r); err != nil {
 				httperr.PrometheusAPIError(w, fmt.Sprintf("could not enforce authorization label matchers: %v", err), http.StatusInternalServerError)
 
 				return
 			}
-			r.URL.RawQuery = q
 
 			next.ServeHTTP(w, r)
 		})
 	}
 }
 
-func enforceValues(mInfo AuthzResponseData, u *url.URL) (values string, err error) {
-	switch {
-	case strings.HasSuffix(u.Path, "/values"):
-		return enforceValuesOnLogQL(mInfo, u.Query(), queryParam, false)
-	case strings.HasSuffix(u.Path, "/series"):
-		return enforceValuesOnLogQL(mInfo, u.Query(), matchParam, false)
-	default:
-		return enforceValuesOnLogQL(mInfo, u.Query(), queryParam, true)
+func enforceRequestLogQL(mInfo AuthzResponseData, r *http.Request) error {
+	q, err := enforceValues(mInfo, r.URL)
+	if err != nil {
+		return err
 	}
+	r.URL.RawQuery = q
+
+	if r.Method != http.MethodPost {
+		return nil
+	}
+	if err := r.ParseForm(); err != nil {
+		return fmt.Errorf("could not parse form: %w", err)
+	}
+	body, err := enforceValuesOnLogQL(mInfo, r.PostForm, logQLParam(r.URL.Path))
+	if err != nil {
+		return err
+	}
+	_ = r.Body.Close()
+	r.Body = io.NopCloser(strings.NewReader(body))
+	r.ContentLength = int64(len(body))
+	r.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	return nil
 }
 
-func enforceValuesOnLogQL(mInfo AuthzResponseData, v url.Values, paramName string, queryEndpoint bool) (values string, err error) {
+func enforceValues(mInfo AuthzResponseData, u *url.URL) (values string, err error) {
+	return enforceValuesOnLogQL(mInfo, u.Query(), logQLParam(u.Path))
+}
+
+func logQLParam(path string) string {
+	if strings.HasSuffix(path, "/series") {
+		return matchParam
+	}
+	return queryParam
+}
+
+func enforceValuesOnLogQL(mInfo AuthzResponseData, v url.Values, paramName string) (values string, err error) {
 	lm, err := initAuthzMatchers(mInfo.Matchers)
 	if err != nil {
 		return "", err
@@ -88,13 +109,6 @@ func enforceValuesOnLogQL(mInfo AuthzResponseData, v url.Values, paramName strin
 
 	paramValue := v.Get(paramName)
 	if paramValue == "" {
-		// For query endpoints, we don't always to enforce the authorization
-		// label matchers, so we skip it if the query is empty.
-		if queryEndpoint {
-			return v.Encode(), nil
-		}
-
-		// For the other endpoints we want to enforce the authZ label matchers
 		expr := &logqlv2.StreamMatcherExpr{}
 		expr.SetMatchers(lm)
 		v.Set(paramName, expr.String())
@@ -143,7 +157,7 @@ func combineLabelMatchers(queryMatchers, authzMatchers []*labels.Matcher) []*lab
 	matchers := make([]*labels.Matcher, 0)
 	for _, am := range authzMatchers {
 		qm := queryMatchersMap[am.Name]
-		if qm == nil || !am.Matches(qm.Value) {
+		if qm == nil || qm.Type != labels.MatchEqual || !am.Matches(qm.Value) {
 			queryMatchersMap[am.Name] = am
 		}
 	}

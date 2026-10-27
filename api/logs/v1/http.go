@@ -196,6 +196,7 @@ func NewHandler(read, tail, write, rules *url.URL, rulesReadOnly bool, tlsOption
 		}
 		r.Group(func(r chi.Router) {
 			r.Use(c.readMiddlewares...)
+			r.Use(server.StripPrefix("/api/logs/v1"))
 			r.Handle(queryRoute, c.instrument.NewHandler(
 				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "query"},
 				proxyRead,
@@ -297,6 +298,7 @@ func NewHandler(read, tail, write, rules *url.URL, rulesReadOnly bool, tlsOption
 		r.Group(func(r chi.Router) {
 			r.Use(c.readMiddlewares...)
 			r.Use(c.rulesReadMiddlewares...)
+			r.Use(server.StripPrefix("/api/logs/v1"))
 			r.Get(rulesRoute, c.instrument.NewHandler(
 				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: handlerRules},
 				proxyRules,
@@ -389,6 +391,7 @@ func NewHandler(read, tail, write, rules *url.URL, rulesReadOnly bool, tlsOption
 		}
 		r.Group(func(r chi.Router) {
 			r.Use(c.readMiddlewares...)
+			r.Use(server.StripPrefix("/api/logs/v1"))
 			r.Handle(tailRoute, c.instrument.NewHandler(
 				prometheus.Labels{labelGroup: groupLogsV1, labelHandler: "tail"},
 				tailRead,

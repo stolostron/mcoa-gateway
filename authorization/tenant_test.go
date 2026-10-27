@@ -51,11 +51,7 @@ func TestWithTenantLabel(t *testing.T) {
 			t.Errorf("expected status 200, got %d", rr.Code)
 		}
 
-		// Verify matchers were created correctly
-		var matchers []*labels.Matcher
-		if err := json.Unmarshal([]byte(capturedData), &matchers); err != nil {
-			t.Fatalf("failed to unmarshal matchers: %v", err)
-		}
+		matchers := decodeMatchers(t, capturedData)
 
 		if len(matchers) != 1 {
 			t.Fatalf("expected 1 matcher, got %d", len(matchers))
@@ -94,11 +90,7 @@ func TestWithTenantLabel(t *testing.T) {
 			t.Errorf("expected status 200, got %d", rr.Code)
 		}
 
-		// Verify matchers were created correctly
-		var matchers []*labels.Matcher
-		if err := json.Unmarshal([]byte(capturedData), &matchers); err != nil {
-			t.Fatalf("failed to unmarshal matchers: %v", err)
-		}
+		matchers := decodeMatchers(t, capturedData)
 
 		if len(matchers) != 1 {
 			t.Fatalf("expected 1 matcher, got %d", len(matchers))
@@ -147,10 +139,7 @@ func TestWithTenantLabel(t *testing.T) {
 		rr := httptest.NewRecorder()
 		handler.ServeHTTP(rr, req)
 
-		var matchers []*labels.Matcher
-		if err := json.Unmarshal([]byte(capturedData), &matchers); err != nil {
-			t.Fatalf("failed to unmarshal matchers: %v", err)
-		}
+		matchers := decodeMatchers(t, capturedData)
 
 		if len(matchers) == 0 {
 			t.Fatal("expected matchers to be set")
@@ -180,10 +169,7 @@ func TestWithTenantLabel(t *testing.T) {
 		rr := httptest.NewRecorder()
 		handler.ServeHTTP(rr, req)
 
-		var matchers []*labels.Matcher
-		if err := json.Unmarshal([]byte(capturedData), &matchers); err != nil {
-			t.Fatalf("failed to unmarshal matchers: %v", err)
-		}
+		matchers := decodeMatchers(t, capturedData)
 
 		if len(matchers) == 0 {
 			t.Fatal("expected matchers to be set")
@@ -193,6 +179,16 @@ func TestWithTenantLabel(t *testing.T) {
 			t.Errorf("expected label name %s, got %s", customLabelName, matchers[0].Name)
 		}
 	})
+}
+
+func decodeMatchers(t *testing.T, data string) []*labels.Matcher {
+	t.Helper()
+
+	var doc AuthzResponseData
+	if err := json.Unmarshal([]byte(data), &doc); err != nil {
+		t.Fatalf("failed to unmarshal matchers: %v", err)
+	}
+	return doc.Matchers
 }
 
 func TestGetData(t *testing.T) {
