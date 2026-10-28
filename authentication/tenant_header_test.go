@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func TestWithTenantFromHeader(t *testing.T) {
@@ -231,6 +233,33 @@ func TestWithTenantFromHeader(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestWithTenantFromURLParamOnMountedRouter(t *testing.T) {
+	root := chi.NewRouter()
+	root.Group(func(r chi.Router) {
+		r.Use(WithTenantFromURLParam("tenant", "X-Scope-OrgID"))
+		child := chi.NewRouter()
+		child.Post("/api/v1/alerts", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			tenant, ok := GetTenant(r.Context())
+			if !ok || tenant != "team-a" {
+				t.Errorf("tenant context = %q, %t; want team-a, true", tenant, ok)
+			}
+			if got := r.Header.Get("X-Scope-OrgID"); got != "team-a" {
+				t.Errorf("tenant header = %q, want team-a", got)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		r.Mount("/api/alertmanager/v2/{tenant}", child)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/alertmanager/v2/team-a/api/v1/alerts", nil)
+	rec := httptest.NewRecorder()
+	root.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusNoContent, rec.Body.String())
 	}
 }
 

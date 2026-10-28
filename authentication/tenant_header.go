@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/stolostron/mcoa-gateway/httperr"
 )
 
@@ -113,6 +115,27 @@ func WithTenantFromHeader(tenantHeader string) Middleware {
 			ctx := context.WithValue(r.Context(), tenantKey, tenantString)
 
 			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// WithTenantFromURLParam extracts one tenant from a chi URL parameter, then
+// applies the same validation and context behavior as WithTenantFromHeader.
+func WithTenantFromURLParam(paramName, tenantHeader string) Middleware {
+	withTenantFromHeader := WithTenantFromHeader(tenantHeader)
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			tenant := chi.URLParam(r, paramName)
+			if tenant == "" {
+				httperr.PrometheusAPIError(w, "tenant is required", http.StatusBadRequest)
+				return
+			}
+
+			request := r.Clone(r.Context())
+			request.Header = r.Header.Clone()
+			request.Header.Set(tenantHeader, tenant)
+			withTenantFromHeader(next).ServeHTTP(w, request)
 		})
 	}
 }

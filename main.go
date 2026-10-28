@@ -45,6 +45,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	alertsv1 "github.com/stolostron/mcoa-gateway/api/alerts/v1"
 	logsv1 "github.com/stolostron/mcoa-gateway/api/logs/v1"
 	metricslegacy "github.com/stolostron/mcoa-gateway/api/metrics/legacy"
 	metricsv1 "github.com/stolostron/mcoa-gateway/api/metrics/v1"
@@ -97,6 +98,7 @@ type config struct {
 	metrics         metricsConfig
 	logs            logsConfig
 	traces          tracesConfig
+	alertmanager    alertmanagerConfig
 	probes          probesConfig
 	middleware      middlewareConfig
 	internalTracing internalTracingConfig
@@ -194,6 +196,19 @@ type tracesConfig struct {
 	// enable traces if readTemplateEndpoint, readEndpoint, or writeEndpoint is provided.
 	enabled           bool
 	enableCertWatcher bool
+}
+
+type alertmanagerConfig struct {
+	endpoints          []*url.URL
+	tenantHeader       string
+	accessorTokenFile  string
+	upstreamTimeout    time.Duration
+	upstreamCAFile     string
+	upstreamServerName string
+}
+
+func (c alertmanagerConfig) isEnabled() bool {
+	return len(c.endpoints) > 0
 }
 
 type probesConfig struct {
@@ -294,9 +309,21 @@ func main() {
 
 	stdlog.Println(version.Info())
 
-	if !cfg.metrics.enabled && !cfg.logs.enabled && !cfg.traces.enabled && !cfg.probes.enabled {
-		stdlog.Fatal("Neither logging, metrics, traces, nor probes endpoints are enabled. " +
+	if !cfg.metrics.enabled && !cfg.logs.enabled && !cfg.traces.enabled && !cfg.probes.enabled && !cfg.alertmanager.isEnabled() {
+		stdlog.Fatal("Neither logging, metrics, traces, probes, nor alertmanager endpoints are enabled. " +
 			"Specifying at least one endpoint is mandatory")
+	}
+
+	alertmanagerAccessorToken := ""
+	if cfg.alertmanager.isEnabled() && cfg.alertmanager.accessorTokenFile != "" {
+		token, err := os.ReadFile(cfg.alertmanager.accessorTokenFile)
+		if err != nil {
+			stdlog.Fatalf("failed to read Alertmanager accessor token file: %v", err)
+		}
+		alertmanagerAccessorToken = strings.TrimSpace(string(token))
+		if alertmanagerAccessorToken == "" {
+			stdlog.Fatal("Alertmanager accessor token file is empty")
+		}
 	}
 
 	logger := logger.NewLogger(cfg.logLevel, cfg.logFormat, cfg.debug.name)
@@ -382,6 +409,13 @@ func main() {
 
 			// OPA authorization is no longer used - RBAC removed from write paths,
 			// and read paths use SSO/mTLS authentication only
+		}
+	}
+
+	tenantIDs := make(map[string]string, len(tenantsCfg.Tenants))
+	for _, t := range tenantsCfg.Tenants {
+		if t != nil {
+			tenantIDs[t.Name] = t.ID
 		}
 	}
 
@@ -522,6 +556,9 @@ func main() {
 			var regMtx sync.RWMutex
 			registeredAuthNRoutes := make(map[string]struct{})
 			for _, t := range tenantsCfg.Tenants {
+				if t == nil {
+					continue
+				}
 				level.Info(logger).Log("msg", "adding a tenant", "tenant", t.Name)
 				if t.RateLimits != nil {
 					for _, rl := range t.RateLimits {
@@ -558,6 +595,32 @@ func main() {
 						}
 					}
 				}(authenticatorConfig, authenticatorType, t.Name)
+			}
+
+			// Alertmanager alert writes extract the tenant from the client
+			// certificate OU, then map it to the configured upstream ID header.
+			if cfg.alertmanager.isEnabled() {
+				alertmanagerRateLimitMiddleware := ratelimit.WithLocalRateLimiter(rateLimits...)
+				if rateLimitClient != nil {
+					alertmanagerRateLimitMiddleware = ratelimit.WithSharedRateLimiter(logger, rateLimitClient, rateLimits...)
+				}
+
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.Timeout(cfg.alertmanager.upstreamTimeout))
+
+					alertmanagerHandler := alertsv1.NewHandler(
+						cfg.alertmanager.endpoints,
+						cfg.alertmanager.upstreamCAFile,
+						cfg.alertmanager.upstreamServerName,
+						alertsv1.Logger(logger),
+						alertsv1.Registry(reg),
+						alertsv1.WriteMiddleware(authentication.WithMTLSTenantExtraction(logger, cfg.alertmanager.tenantHeader)),
+						alertsv1.WithTenantHeader(cfg.alertmanager.tenantHeader, tenantIDs),
+						alertsv1.WithAccessorToken(alertmanagerAccessorToken),
+						alertsv1.WriteMiddleware(alertmanagerRateLimitMiddleware),
+					)
+					r.Mount("/api/alertmanager/v2", alertmanagerHandler)
+				})
 			}
 
 			// Metrics.
@@ -1012,6 +1075,7 @@ func parseFlags() (config, error) {
 		rawTracesWriteOTLPGRPCEndpoint string
 		rawTracesWriteOTLPHTTPEndpoint string
 		rawProbesEndpoint              string
+		rawAlertmanagerEndpoints       multiStringFlag
 	)
 
 	cfg := config{}
@@ -1107,6 +1171,8 @@ func parseFlags() (config, error) {
 		"The endpoint against which to make OTLP gRPC write requests for traces.")
 	flag.StringVar(&rawTracesWriteOTLPHTTPEndpoint, "traces.write.otlphttp.endpoint", "",
 		"The endpoint against which to make OTLP HTTP write requests for traces.")
+	flag.Var(&rawAlertmanagerEndpoints, "alertmanager.endpoint",
+		"The endpoint to which alerts should be sent. May be repeated for multiple endpoints.")
 	flag.DurationVar(&cfg.traces.upstreamWriteTimeout, "traces.write-timeout", tracesMiddlewareTimeout,
 		"The HTTP write timeout for proxied requests to the traces endpoint.")
 	flag.StringVar(&cfg.traces.upstreamCAFile, "traces.tls.ca-file", "",
@@ -1197,6 +1263,16 @@ func parseFlags() (config, error) {
 		"The number of concurrent requests that can buffered.")
 	flag.DurationVar(&cfg.middleware.backLogDurationConcurrentRequests, "middleware.backlog-duration-concurrent-requests", 1*time.Millisecond,
 		"The time duration to buffer up concurrent requests.")
+	flag.StringVar(&cfg.alertmanager.upstreamCAFile, "alertmanager.upstream-ca-file", "",
+		"PEM file of trusted CAs for TLS to Alertmanager upstreams. Empty uses the host's default root CAs.")
+	flag.StringVar(&cfg.alertmanager.upstreamServerName, "alertmanager.upstream-server-name", "",
+		"TLS ServerName for Alertmanager upstream connections (SNI and certificate verification). Empty lets Go infer from the request URL.")
+	flag.StringVar(&cfg.alertmanager.tenantHeader, "alertmanager.tenant-header", "X-Scope-OrgID",
+		"The tenant header to set on requests forwarded to Alertmanager replicas.")
+	flag.StringVar(&cfg.alertmanager.accessorTokenFile, "alertmanager.accessor-token-file", "",
+		"File containing the Observability Alertmanager accessor token to send as a Bearer token to replicas.")
+	flag.DurationVar(&cfg.alertmanager.upstreamTimeout, "alertmanager.upstream-timeout", metricsMiddlewareTimeout,
+		"The HTTP timeout for fanout requests to Alertmanager replicas.")
 
 	flag.Parse()
 
@@ -1365,6 +1441,16 @@ func parseFlags() (config, error) {
 		}
 
 		cfg.traces.writeOTLPHTTPEndpoint = tracesOTLPHTTPEndpoint
+	}
+
+	if len(rawAlertmanagerEndpoints) > 0 {
+		for _, raw := range rawAlertmanagerEndpoints {
+			alertmanagerEndpoint, err := url.ParseRequestURI(raw)
+			if err != nil {
+				return cfg, fmt.Errorf("--alertmanager.endpoint is invalid, raw %s: %w", raw, err)
+			}
+			cfg.alertmanager.endpoints = append(cfg.alertmanager.endpoints, alertmanagerEndpoint)
+		}
 	}
 
 	if rawProbesEndpoint != "" {
