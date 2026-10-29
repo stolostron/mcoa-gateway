@@ -245,11 +245,15 @@ func newThanosReceiveService(e e2e.Environment) *e2emon.InstrumentedRunnable {
 }
 
 func newAlertmanagerService(e e2e.Environment) *e2emon.InstrumentedRunnable {
+	return newNamedAlertmanagerService(e, "alertmanager")
+}
+
+func newNamedAlertmanagerService(e e2e.Environment, name string) *e2emon.InstrumentedRunnable {
 	ports := map[string]int{
 		"http": 9093,
 	}
 
-	return e2emon.AsInstrumented(e.Runnable("alertmanager").WithPorts(ports).Init(
+	return e2emon.AsInstrumented(e.Runnable(name).WithPorts(ports).Init(
 		e2e.StartOptions{
 			Image:     alertmanagerImage,
 			Readiness: e2e.NewHTTPReadinessProbe("http", "/-/ready", 200, 200),
@@ -344,6 +348,8 @@ type apiOptions struct {
 	metricsWriteEndpoint        string
 	metricsRulesEndpoint        string
 	alertmanagerEndpoint        string
+	alertmanagerFanoutEndpoints []string
+	alertmanagerAccessorToken   string
 	ratelimiterAddr             string
 	probesEndpoint              string
 	tracesWriteOTLPGRPCEndpoint string
@@ -425,6 +431,20 @@ func withAlertmanagerEndpoint(alertmanagerEndpoint string) apiOption {
 	}
 }
 
+// withAlertmanagerFanoutEndpoints enables POST /api/alertmanager/v2 fanout writes.
+// Pass one URL per Alertmanager replica (--alertmanager.endpoint, repeatable).
+func withAlertmanagerFanoutEndpoints(endpoints ...string) apiOption {
+	return func(o *apiOptions) {
+		o.alertmanagerFanoutEndpoints = append(o.alertmanagerFanoutEndpoints, endpoints...)
+	}
+}
+
+func withAlertmanagerAccessorToken(token string) apiOption {
+	return func(o *apiOptions) {
+		o.alertmanagerAccessorToken = token
+	}
+}
+
 func withRateLimiter(addr string) apiOption {
 	return func(o *apiOptions) {
 		o.ratelimiterAddr = addr
@@ -470,6 +490,17 @@ func newObservatoriumAPIService(
 
 	if opts.alertmanagerEndpoint != "" {
 		args = append(args, "--metrics.alertmanager.endpoint="+opts.alertmanagerEndpoint)
+	}
+
+	for _, ep := range opts.alertmanagerFanoutEndpoints {
+		args = append(args, "--alertmanager.endpoint="+ep)
+	}
+	if opts.alertmanagerAccessorToken != "" {
+		tokenPath := filepath.Join(e.SharedDir(), configSharedDir, "alertmanager-accessor.token")
+		if err := os.WriteFile(tokenPath, []byte(opts.alertmanagerAccessorToken), 0o600); err != nil {
+			return nil, err
+		}
+		args = append(args, "--alertmanager.accessor-token-file="+tokenPath)
 	}
 
 	if opts.logsEndpoint != "" {
