@@ -69,12 +69,12 @@ func startServicesForMetrics(t *testing.T, e e2e.Environment) (
 }
 
 func startServicesForRules(t *testing.T, e e2e.Environment) (metricsRulesEndpoint string) {
-	// Create S3 replacement for rules backend
+	// S3-compatible object store for rules backend (SeaweedFS, same pattern as Thanos e2e).
 	const bucket = "obs-rules-test"
-	runnable := e2edb.NewMinio(e, "rules-minio", bucket)
+	runnable := e2edb.NewSeaweedFS(e, "rules-seaweedfs", bucket)
 	testutil.Ok(t, e2e.StartAndWaitReady(runnable))
 
-	createRulesYAML(t, e, bucket, runnable.InternalEndpoint(e2edb.AccessPortName), e2edb.MinioAccessKey, e2edb.MinioSecretKey)
+	createRulesYAML(t, e, bucket, runnable.InternalEndpoint(e2edb.AccessPortName), e2edb.S3AccessKey, e2edb.S3SecretKey)
 
 	rulesBackend := newRulesBackendService(e)
 	testutil.Ok(t, e2e.StartAndWaitReady(rulesBackend))
@@ -86,14 +86,12 @@ func startServicesForLogs(t *testing.T, e e2e.Environment) (
 	logsEndpoint string,
 	logsExtEndpoint string,
 ) {
-
-	// Create S3 replacement for rules backend
-	bucket := "loki_test"
-	runnable := e2edb.NewMinio(e, "loki-minio", bucket)
-
+	// S3-compatible object store for Loki (SeaweedFS, same pattern as Thanos e2e).
+	bucket := "loki-test"
+	runnable := e2edb.NewSeaweedFS(e, "loki-seaweedfs", bucket)
 	testutil.Ok(t, e2e.StartAndWaitReady(runnable))
 
-	createLokiYAML(t, e, e2edb.MinioAccessKey, e2edb.MinioSecretKey, runnable.InternalEndpoint(e2edb.AccessPortName), bucket)
+	createLokiYAML(t, e, e2edb.S3AccessKey, e2edb.S3SecretKey, runnable.InternalEndpoint(e2edb.AccessPortName), bucket)
 
 	loki := newLokiService(e)
 	testutil.Ok(t, e2e.StartAndWaitReady(loki))
