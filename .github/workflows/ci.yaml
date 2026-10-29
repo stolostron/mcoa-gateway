@@ -92,6 +92,8 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Run end-to-end tests
+        # container-test builds with docker into E2E_IMAGE (mcoa-gateway:e2e).
+        # Do not use podman here: efficientgo/e2e only talks to the docker CLI.
         run: make test-e2e
 
   lint:

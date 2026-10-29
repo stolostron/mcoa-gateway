@@ -18,7 +18,10 @@ import (
 )
 
 const (
-	apiImage = "quay.io/stolostron/mcoa-gateway:local_e2e_test" // Image that is built if you run `make container-test`.
+	// Default matches Makefile E2E_IMAGE. Override with MCOA_GATEWAY_E2E_IMAGE.
+	// Must be a local tag (not quay.io/...) so e2e's docker pull fallback cannot
+	// hit a remote 401 when the image is missing.
+	defaultAPIImage = "mcoa-gateway:e2e"
 
 	thanosImage       = "quay.io/thanos/thanos:v0.40.1"
 	lokiImage         = "grafana/loki:2.9.17"
@@ -38,6 +41,13 @@ const (
 	logLevelError = "error"
 	logLevelDebug = "debug"
 )
+
+func apiImage() string {
+	if v := os.Getenv("MCOA_GATEWAY_E2E_IMAGE"); v != "" {
+		return v
+	}
+	return defaultAPIImage
+}
 
 func startServicesForMetrics(t *testing.T, e e2e.Environment) (
 	metricsReadEndpoint string,
@@ -546,7 +556,7 @@ func newObservatoriumAPIService(
 
 	return e2emon.AsInstrumented(e.Runnable("mcoa-gateway").WithPorts(ports).Init(
 		e2e.StartOptions{
-			Image:     apiImage,
+			Image:     apiImage(),
 			Command:   e2e.NewCommandWithoutEntrypoint("mcoa-gateway", args...),
 			Readiness: e2e.NewHTTPReadinessProbe("http-internal", "/ready", 200, 200),
 			User:      strconv.Itoa(os.Getuid()),

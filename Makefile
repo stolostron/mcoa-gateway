@@ -133,10 +133,16 @@ test: build test-unit
 test-unit:
 	CGO_ENABLED=1 GO111MODULE=on go test -v -race -short $(shell go list ./... | grep -v api/test/e2e)
 
+# Local-only tag consumed by test/e2e. Must not point at a remote registry:
+# efficientgo/e2e runs `docker image inspect` then `docker pull` on miss, and a
+# quay.io/... name 401s in CI. Always build with docker (not podman) because the
+# e2e harness hardcodes the docker CLI.
+E2E_IMAGE ?= mcoa-gateway:e2e
+
 .PHONY: test-e2e
 test-e2e: container-test
 	@rm -rf test/e2e/e2e_*
-	CGO_ENABLED=1 GO111MODULE=on go test -v -race -short -tags integration ./test/e2e
+	MCOA_GATEWAY_E2E_IMAGE=$(E2E_IMAGE) CGO_ENABLED=1 GO111MODULE=on go test -v -race -short -tags integration ./test/e2e
 
 .PHONY: test-load
 test-load: build load-test-dependencies
@@ -165,15 +171,17 @@ proto: ratelimit/gubernator/proto/google ratelimit/gubernator/gubernator.proto $
 
 .PHONY: container-test
 container-test:
-	$(OCI_BIN) build \
+	docker build \
 		--build-arg BUILD_DATE="$(BUILD_TIMESTAMP)" \
 		--build-arg VERSION="$(VERSION)" \
 		--build-arg VCS_REF="$(VCS_REF)" \
 		--build-arg VCS_BRANCH="$(VCS_BRANCH)" \
 		--build-arg DOCKERFILE_PATH="/Dockerfile.e2e-test" \
-		-t $(DOCKER_REPO):local_e2e_test  \
+		-t $(E2E_IMAGE) \
 		-f Dockerfile.e2e-test \
 		.
+	@docker image inspect $(E2E_IMAGE) >/dev/null
+	@echo "e2e gateway image ready: $(E2E_IMAGE)"
 
 .PHONY: container
 container: Dockerfile
