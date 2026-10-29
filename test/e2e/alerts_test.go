@@ -5,6 +5,8 @@ package e2e
 import (
 	"context"
 	"net/http"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 
 	"github.com/efficientgo/core/testutil"
 	"github.com/efficientgo/e2e"
+	e2emon "github.com/efficientgo/e2e/monitoring"
 )
 
 func TestAlertmanagerApiProxy(t *testing.T) {
@@ -29,88 +32,81 @@ func TestAlertmanagerApiProxy(t *testing.T) {
 	t.Cleanup(e.Close)
 
 	prepareConfigsAndCerts(t, e)
-	_, token, rateLimiterAddr := startBaseServices(t, e)
+	rateLimiterAddr := startBaseServices(t, e)
 	alertmanagerEndpoint := newAlertmanagerService(e)
 	readEndpoint, writeEndpoint, _ := startServicesForMetrics(t, e)
 	testutil.Ok(t, e2e.StartAndWaitReady(alertmanagerEndpoint))
 
+	amURL := "http://" + alertmanagerEndpoint.InternalEndpoint("http")
 	api, err := newObservatoriumAPIService(
 		e,
 		withMetricsEndpoints("http://"+readEndpoint, "http://"+writeEndpoint),
-		withAlertmanagerEndpoint("http://"+alertmanagerEndpoint.InternalEndpoint("http")),
+		withAlertmanagerEndpoint(amURL),
+		// Same replica for fanout writes so POST /api/alertmanager/v2 is enabled
+		// alongside the metrics AM read proxy.
+		withAlertmanagerFanoutEndpoints(amURL),
 		withRateLimiter(rateLimiterAddr),
 	)
 	testutil.Ok(t, err)
 	testutil.Ok(t, e2e.StartAndWaitReady(api))
 
-	authClient := &http.Client{
-		Transport: &tokenRoundTripper{
-			rt: &http.Transport{
-				TLSClientConfig: getTLSClientConfig(t, e),
-			}, token: token},
-	}
+	authClient := newMTLSAuthClient(t, e, metricsTenantHeader, defaultTenantName, "client.pem", "client.key")
+	// Fanout writes authenticate via client cert OU (no tenant header required).
+	fanoutClient := &http.Client{Transport: &http.Transport{
+		TLSClientConfig: getTLSClientConfigWithClientCert(t, e, "client.pem", "client.key"),
+	}}
 
 	t.Run("alerts-check-then-write-then-read", func(t *testing.T) {
-		// create a alertmanager that goes through the gateway proxy and requires auth token
-		runtime := httptransport.New(api.Endpoint("https"), "/api/metrics/v1/test-oidc/am"+client2.DefaultBasePath, []string{"https"})
+		runtime := httptransport.New(api.Endpoint("https"), "/api/metrics/v1/am"+client2.DefaultBasePath, []string{"https"})
 		tenantAlertmanagerClient := alert.New(runtime, strfmt.Default)
 
-		// create an alertmanager client that goes directly to the alertmanager
 		runtimeYolo := httptransport.New(alertmanagerEndpoint.Endpoint("http"), client2.DefaultBasePath, []string{"http"})
 		adminAlertmanagerClient := alert.New(runtimeYolo, strfmt.Default)
 
-		// Check that there are no alerts
 		alertsResult, err := adminAlertmanagerClient.GetAlerts(
 			&alert.GetAlertsParams{
 				Context:    testContextWithTimeout(t),
-				HTTPClient: authClient,
+				HTTPClient: http.DefaultClient,
 			},
 		)
 		testutil.Ok(t, err)
 		testutil.Equals(t, 0, len(alertsResult.Payload))
 
-		// Create two alerts with the alertmanager client
 		ok, err := adminAlertmanagerClient.PostAlerts(
 			&alert.PostAlertsParams{
 				Context:    testContextWithTimeout(t),
-				HTTPClient: authClient,
+				HTTPClient: http.DefaultClient,
 				Alerts: []*models.PostableAlert{
 					{
-						Annotations: models.LabelSet{
-							"test": "true",
-						},
-						StartsAt: strfmt.DateTime(time.Now()),
-						EndsAt:   strfmt.DateTime(time.Now().Add(time.Hour)),
+						Annotations: models.LabelSet{"test": "true"},
+						StartsAt:    strfmt.DateTime(time.Now().Add(-time.Minute)),
+						EndsAt:      strfmt.DateTime(time.Now().Add(time.Hour)),
 						Alert: models.Alert{
 							Labels: models.LabelSet{
 								"alertname": "test-alert-tenant-a",
 								"severity":  "critical",
-								"tenant_id": "1610b0c3-c509-4592-a256-a1871353dbfa",
+								"tenant_id": defaultTenantName,
 							},
 							GeneratorURL: "http://localhost",
 						},
 					},
 					{
-						Annotations: models.LabelSet{
-							"test": "true",
-						},
-						StartsAt: strfmt.DateTime(time.Now()),
-						EndsAt:   strfmt.DateTime(time.Now().Add(time.Hour)),
+						Annotations: models.LabelSet{"test": "true"},
+						StartsAt:    strfmt.DateTime(time.Now().Add(-time.Minute)),
+						EndsAt:      strfmt.DateTime(time.Now().Add(time.Hour)),
 						Alert: models.Alert{
 							Labels: models.LabelSet{
 								"alertname": "test-alert-tenant-a-warn",
 								"severity":  "warning",
-								"tenant_id": "1610b0c3-c509-4592-a256-a1871353dbfa",
+								"tenant_id": defaultTenantName,
 							},
 							GeneratorURL: "http://localhost",
 						},
 					},
 					{
-						Annotations: models.LabelSet{
-							"test": "true",
-						},
-						StartsAt: strfmt.DateTime(time.Now()),
-						EndsAt:   strfmt.DateTime(time.Now().Add(time.Hour)),
+						Annotations: models.LabelSet{"test": "true"},
+						StartsAt:    strfmt.DateTime(time.Now().Add(-time.Minute)),
+						EndsAt:      strfmt.DateTime(time.Now().Add(time.Hour)),
 						Alert: models.Alert{
 							Labels: models.LabelSet{
 								"alertname": "test-alert-tenant-b",
@@ -125,60 +121,57 @@ func TestAlertmanagerApiProxy(t *testing.T) {
 		)
 		testutil.Ok(t, err)
 		testutil.Equals(t, ok.IsSuccess(), true)
-		// read the results with the admin client
+
 		alertsResult, err = adminAlertmanagerClient.GetAlerts(
 			&alert.GetAlertsParams{
 				Context:    testContextWithTimeout(t),
-				HTTPClient: authClient,
+				HTTPClient: http.DefaultClient,
 			},
 		)
 		testutil.Ok(t, err)
 		testutil.Assert(t, len(alertsResult.Payload) == 3, "expected 3 alerts, got %d", len(alertsResult.Payload))
 
-		// read the results with the tenants client
 		alertsResult, err = tenantAlertmanagerClient.GetAlerts(
 			&alert.GetAlertsParams{
 				Context:    testContextWithTimeout(t),
 				HTTPClient: authClient,
 			},
 		)
-		// assert that the tenant only gets back the alert with their own tenant_id	label
 		testutil.Ok(t, err)
 		testutil.Assert(t, len(alertsResult.Payload) == 2, "expected 2 alerts, got %d", len(alertsResult.Payload))
-		testutil.Equals(t, []string{"test-alert-tenant-a", "test-alert-tenant-a-warn"},
-			[]string{alertsResult.Payload[1].Labels["alertname"], alertsResult.Payload[0].Labels["alertname"]},
-		)
+
+		names := []string{alertsResult.Payload[0].Labels["alertname"], alertsResult.Payload[1].Labels["alertname"]}
+		sort.Strings(names)
+		testutil.Equals(t, []string{"test-alert-tenant-a", "test-alert-tenant-a-warn"}, names)
 	})
 
 	t.Run("silence-check-then-write-then-read", func(t *testing.T) {
-		// create a alertmanager that goes through the gateway proxy and requires auth token
-		runtime := httptransport.New(api.Endpoint("https"), "/api/metrics/v1/test-oidc/am"+client2.DefaultBasePath, []string{"https"})
+		runtime := httptransport.New(api.Endpoint("https"), "/api/metrics/v1/am"+client2.DefaultBasePath, []string{"https"})
 		tenantSilenceClient := silence.New(runtime, strfmt.Default)
 
-		// create an alertmanager client that goes directly to the alertmanager
 		runtimeYolo := httptransport.New(alertmanagerEndpoint.Endpoint("http"), client2.DefaultBasePath, []string{"http"})
 		adminSilenceClient := silence.New(runtimeYolo, strfmt.Default)
 		adminAlertClient := alert.New(runtimeYolo, strfmt.Default)
 
-		// Check that there are no silences
 		silenceResult, err := adminSilenceClient.GetSilences(
 			&silence.GetSilencesParams{
 				Context:    testContextWithTimeout(t),
-				HTTPClient: authClient,
+				HTTPClient: http.DefaultClient,
 			},
 		)
 		testutil.Ok(t, err)
 		testutil.Equals(t, 0, len(silenceResult.Payload))
 
-		// Create a silence with the tenant client
-		// this should match two alerts but only silence one due to the tenant_id label
+		// Match critical alerts; tenancy enforcer injects tenant_id=test-oidc so only
+		// that tenant's critical alert is silenced. startsAt is in the past so the
+		// silence is active even if the Alertmanager clock lags the test host.
 		ok, err := tenantSilenceClient.PostSilences(
 			&silence.PostSilencesParams{
 				Silence: &models.PostableSilence{
 					Silence: models.Silence{
 						CreatedBy: toStrPtr(t, "test"),
 						Comment:   toStrPtr(t, "test"),
-						StartsAt:  toDateTimePtr(t, time.Now()),
+						StartsAt:  toDateTimePtr(t, time.Now().Add(-time.Minute)),
 						EndsAt:    toDateTimePtr(t, time.Now().Add(time.Hour)),
 						Matchers: []*models.Matcher{
 							{
@@ -197,7 +190,6 @@ func TestAlertmanagerApiProxy(t *testing.T) {
 		testutil.Ok(t, err)
 		testutil.Equals(t, ok.IsSuccess(), true)
 
-		// read the results with the admin client
 		alertsResult, err := adminAlertClient.GetAlerts(
 			&alert.GetAlertsParams{
 				Context:    testContextWithTimeout(t),
@@ -207,23 +199,21 @@ func TestAlertmanagerApiProxy(t *testing.T) {
 		testutil.Ok(t, err)
 		testutil.Assert(t, len(alertsResult.Payload) == 3, "expected 3 alerts, got %d", len(alertsResult.Payload))
 
-		var silenced int
-		for _, alert := range alertsResult.Payload {
-			if len(alert.Status.SilencedBy) > 0 {
-				silenced++
+		var silencedNames []string
+		for _, a := range alertsResult.Payload {
+			if len(a.Status.SilencedBy) > 0 {
+				silencedNames = append(silencedNames, a.Labels["alertname"])
 			}
 		}
-		testutil.Assert(t, silenced == 1, "expected 1 silenced alert, got %d", silenced)
+		testutil.Equals(t, []string{"test-alert-tenant-a"}, silencedNames)
 
-		// Create a silence with the admin client
-		// this should match two alerts and silence them
 		ok, err = adminSilenceClient.PostSilences(
 			&silence.PostSilencesParams{
 				Silence: &models.PostableSilence{
 					Silence: models.Silence{
 						CreatedBy: toStrPtr(t, "admin"),
 						Comment:   toStrPtr(t, "admin"),
-						StartsAt:  toDateTimePtr(t, time.Now()),
+						StartsAt:  toDateTimePtr(t, time.Now().Add(-time.Minute)),
 						EndsAt:    toDateTimePtr(t, time.Now().Add(time.Hour)),
 						Matchers: []*models.Matcher{
 							{
@@ -242,7 +232,6 @@ func TestAlertmanagerApiProxy(t *testing.T) {
 		testutil.Ok(t, err)
 		testutil.Equals(t, ok.IsSuccess(), true)
 
-		// read the results with the admin client
 		adminSilenceResult, err := adminSilenceClient.GetSilences(
 			&silence.GetSilencesParams{
 				Context:    testContextWithTimeout(t),
@@ -252,7 +241,6 @@ func TestAlertmanagerApiProxy(t *testing.T) {
 		testutil.Ok(t, err)
 		testutil.Equals(t, 2, len(adminSilenceResult.Payload))
 
-		// read the results with the tenant client
 		tenantSilenceResult, err := tenantSilenceClient.GetSilences(
 			&silence.GetSilencesParams{
 				Context:    testContextWithTimeout(t),
@@ -261,13 +249,168 @@ func TestAlertmanagerApiProxy(t *testing.T) {
 		)
 		testutil.Ok(t, err)
 		testutil.Equals(t, 1, len(tenantSilenceResult.Payload))
-
 	})
+
+	t.Run("alerts-requires-client-cert", func(t *testing.T) {
+		noCertClient := &http.Client{Transport: &authRoundTripper{
+			rt: &http.Transport{
+				TLSClientConfig: getTLSClientConfig(t, e),
+			},
+			tenantHeader: metricsTenantHeader,
+			tenant:       defaultTenantName,
+		}}
+		req, err := http.NewRequest(http.MethodGet, "https://"+api.Endpoint("https")+"/api/metrics/v1/am/api/v2/alerts", nil)
+		testutil.Ok(t, err)
+		res, err := noCertClient.Do(req)
+		testutil.Ok(t, err)
+		defer res.Body.Close()
+		testutil.Equals(t, http.StatusUnauthorized, res.StatusCode)
+	})
+
+	t.Run("fanout-write-then-tenant-read", func(t *testing.T) {
+		// Write through the fanout path (mTLS OU → tenant ID header), then read
+		// through the metrics AM proxy which enforces tenant_id matchers.
+		fanoutRuntime := httptransport.New(api.Endpoint("https"), "/api/alertmanager/v2"+client2.DefaultBasePath, []string{"https"})
+		fanoutAlertClient := alert.New(fanoutRuntime, strfmt.Default)
+
+		ok, err := fanoutAlertClient.PostAlerts(
+			&alert.PostAlertsParams{
+				Context:    testContextWithTimeout(t),
+				HTTPClient: fanoutClient,
+				Alerts: []*models.PostableAlert{
+					{
+						Annotations: models.LabelSet{"test": "fanout"},
+						StartsAt:    strfmt.DateTime(time.Now().Add(-time.Minute)),
+						EndsAt:      strfmt.DateTime(time.Now().Add(time.Hour)),
+						Alert: models.Alert{
+							Labels: models.LabelSet{
+								"alertname": "fanout-alert-tenant-a",
+								"severity":  "warning",
+								"tenant_id": defaultTenantName,
+							},
+							GeneratorURL: "http://localhost",
+						},
+					},
+				},
+			},
+		)
+		testutil.Ok(t, err)
+		testutil.Equals(t, ok.IsSuccess(), true)
+
+		readRuntime := httptransport.New(api.Endpoint("https"), "/api/metrics/v1/am"+client2.DefaultBasePath, []string{"https"})
+		tenantAlertClient := alert.New(readRuntime, strfmt.Default)
+		alertsResult, err := tenantAlertClient.GetAlerts(
+			&alert.GetAlertsParams{
+				Context:    testContextWithTimeout(t),
+				HTTPClient: authClient,
+			},
+		)
+		testutil.Ok(t, err)
+
+		var found bool
+		for _, a := range alertsResult.Payload {
+			if a.Labels["alertname"] == "fanout-alert-tenant-a" {
+				found = true
+				testutil.Equals(t, defaultTenantName, a.Labels["tenant_id"])
+			}
+		}
+		testutil.Assert(t, found, "fanout-written alert not visible via tenant read: %v", alertsResult.Payload)
+	})
+
+	t.Run("fanout-requires-client-cert", func(t *testing.T) {
+		noCertClient := &http.Client{Transport: &http.Transport{
+			TLSClientConfig: getTLSClientConfig(t, e),
+		}}
+		req, err := http.NewRequest(
+			http.MethodPost,
+			"https://"+api.Endpoint("https")+"/api/alertmanager/v2/api/v2/alerts",
+			strings.NewReader(`[]`),
+		)
+		testutil.Ok(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		res, err := noCertClient.Do(req)
+		testutil.Ok(t, err)
+		defer res.Body.Close()
+		testutil.Equals(t, http.StatusUnauthorized, res.StatusCode)
+	})
+}
+
+func TestAlertmanagerFanoutReplicas(t *testing.T) {
+	t.Parallel()
+
+	e, err := e2e.New(e2e.WithName(uniqueE2ENetworkName(t)))
+	testutil.Ok(t, err)
+	t.Cleanup(e.Close)
+
+	prepareConfigsAndCerts(t, e)
+	rateLimiterAddr := startBaseServices(t, e)
+	am1 := newNamedAlertmanagerService(e, "alertmanager-a")
+	am2 := newNamedAlertmanagerService(e, "alertmanager-b")
+	readEndpoint, writeEndpoint, _ := startServicesForMetrics(t, e)
+	testutil.Ok(t, e2e.StartAndWaitReady(am1, am2))
+
+	am1URL := "http://" + am1.InternalEndpoint("http")
+	am2URL := "http://" + am2.InternalEndpoint("http")
+	api, err := newObservatoriumAPIService(
+		e,
+		withMetricsEndpoints("http://"+readEndpoint, "http://"+writeEndpoint),
+		withAlertmanagerEndpoint(am1URL),
+		withAlertmanagerFanoutEndpoints(am1URL, am2URL),
+		withAlertmanagerAccessorToken("e2e-accessor-token"),
+		withRateLimiter(rateLimiterAddr),
+	)
+	testutil.Ok(t, err)
+	testutil.Ok(t, e2e.StartAndWaitReady(api))
+
+	fanoutClient := &http.Client{Transport: &http.Transport{
+		TLSClientConfig: getTLSClientConfigWithClientCert(t, e, "client.pem", "client.key"),
+	}}
+	fanoutRuntime := httptransport.New(api.Endpoint("https"), "/api/alertmanager/v2"+client2.DefaultBasePath, []string{"https"})
+	fanoutAlertClient := alert.New(fanoutRuntime, strfmt.Default)
+
+	ok, err := fanoutAlertClient.PostAlerts(
+		&alert.PostAlertsParams{
+			Context:    testContextWithTimeout(t),
+			HTTPClient: fanoutClient,
+			Alerts: []*models.PostableAlert{
+				{
+					Annotations: models.LabelSet{"test": "fanout-replicas"},
+					StartsAt:    strfmt.DateTime(time.Now().Add(-time.Minute)),
+					EndsAt:      strfmt.DateTime(time.Now().Add(time.Hour)),
+					Alert: models.Alert{
+						Labels: models.LabelSet{
+							"alertname": "fanout-replica-alert",
+							"severity":  "critical",
+							"tenant_id": defaultTenantName,
+						},
+						GeneratorURL: "http://localhost",
+					},
+				},
+			},
+		},
+	)
+	testutil.Ok(t, err)
+	testutil.Equals(t, ok.IsSuccess(), true)
+
+	for _, am := range []*e2emon.InstrumentedRunnable{am1, am2} {
+		adminRuntime := httptransport.New(am.Endpoint("http"), client2.DefaultBasePath, []string{"http"})
+		adminClient := alert.New(adminRuntime, strfmt.Default)
+		alertsResult, err := adminClient.GetAlerts(
+			&alert.GetAlertsParams{
+				Context:    testContextWithTimeout(t),
+				HTTPClient: http.DefaultClient,
+			},
+		)
+		testutil.Ok(t, err)
+		testutil.Assert(t, len(alertsResult.Payload) >= 1, "replica %s missing fanout alert: %v", am.Name(), alertsResult.Payload)
+		testutil.Equals(t, "fanout-replica-alert", alertsResult.Payload[0].Labels["alertname"])
+	}
 }
 
 func testContextWithTimeout(t *testing.T) context.Context {
 	t.Helper()
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
 	return ctx
 }
 

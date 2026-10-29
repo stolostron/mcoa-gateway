@@ -1,4 +1,4 @@
-//go:build integration || interactive
+//go:build integration
 
 package e2e
 
@@ -18,7 +18,10 @@ import (
 )
 
 const (
-	apiImage = "quay.io/stolostron/mcoa-gateway:local_e2e_test" // Image that is built if you run `make container-test`.
+	// Default matches Makefile E2E_IMAGE. Override with MCOA_GATEWAY_E2E_IMAGE.
+	// Must be a local tag (not quay.io/...) so e2e's docker pull fallback cannot
+	// hit a remote 401 when the image is missing.
+	defaultAPIImage = "mcoa-gateway:e2e"
 
 	thanosImage       = "quay.io/thanos/thanos:v0.40.1"
 	lokiImage         = "grafana/loki:2.9.17"
@@ -30,7 +33,6 @@ const (
 	otelCollectorImage  = "ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.142.0"
 	tempoImage          = "grafana/tempo:2.9.0"
 
-	dexImage              = "dexidp/dex:v2.30.0"
 	opaImage              = "openpolicyagent/opa:1.5.1-static"
 	gubernatorImage       = "ghcr.io/mailgun/gubernator:v2.0.0-rc.36"
 	rulesObjectStoreImage = "quay.io/observatorium/rules-objstore:main-2023-01-05-26de237"
@@ -38,6 +40,13 @@ const (
 	logLevelError = "error"
 	logLevelDebug = "debug"
 )
+
+func apiImage() string {
+	if v := os.Getenv("MCOA_GATEWAY_E2E_IMAGE"); v != "" {
+		return v
+	}
+	return defaultAPIImage
+}
 
 func startServicesForMetrics(t *testing.T, e e2e.Environment) (
 	metricsReadEndpoint string,
@@ -59,12 +68,12 @@ func startServicesForMetrics(t *testing.T, e e2e.Environment) (
 }
 
 func startServicesForRules(t *testing.T, e e2e.Environment) (metricsRulesEndpoint string) {
-	// Create S3 replacement for rules backend
+	// S3-compatible object store for rules backend (SeaweedFS, same pattern as Thanos e2e).
 	const bucket = "obs-rules-test"
-	runnable := e2edb.NewMinio(e, "rules-minio", bucket)
+	runnable := e2edb.NewSeaweedFS(e, "rules-seaweedfs", bucket)
 	testutil.Ok(t, e2e.StartAndWaitReady(runnable))
 
-	createRulesYAML(t, e, bucket, runnable.InternalEndpoint(e2edb.AccessPortName), e2edb.MinioAccessKey, e2edb.MinioSecretKey)
+	createRulesYAML(t, e, bucket, runnable.InternalEndpoint(e2edb.AccessPortName), e2edb.S3AccessKey, e2edb.S3SecretKey)
 
 	rulesBackend := newRulesBackendService(e)
 	testutil.Ok(t, e2e.StartAndWaitReady(rulesBackend))
@@ -76,14 +85,12 @@ func startServicesForLogs(t *testing.T, e e2e.Environment) (
 	logsEndpoint string,
 	logsExtEndpoint string,
 ) {
-
-	// Create S3 replacement for rules backend
-	bucket := "loki_test"
-	runnable := e2edb.NewMinio(e, "loki-minio", bucket)
-
+	// S3-compatible object store for Loki (SeaweedFS, same pattern as Thanos e2e).
+	bucket := "loki-test"
+	runnable := e2edb.NewSeaweedFS(e, "loki-seaweedfs", bucket)
 	testutil.Ok(t, e2e.StartAndWaitReady(runnable))
 
-	createLokiYAML(t, e, e2edb.MinioAccessKey, e2edb.MinioSecretKey, runnable.InternalEndpoint(e2edb.AccessPortName), bucket)
+	createLokiYAML(t, e, e2edb.S3AccessKey, e2edb.S3SecretKey, runnable.InternalEndpoint(e2edb.AccessPortName), bucket)
 
 	loki := newLokiService(e)
 	testutil.Ok(t, e2e.StartAndWaitReady(loki))
@@ -177,46 +184,15 @@ func startServicesForProbes(t *testing.T, e e2e.Environment) (probesEndpoint str
 }
 
 // startBaseServices starts and waits until all base services required for the test are ready.
-func startBaseServices(t *testing.T, e e2e.Environment) (
-	dex *e2emon.InstrumentedRunnable,
-	token string,
-	rateLimiterAddr string,
-) {
-	createDexYAML(t, e, getContainerName(e, "dex"), getContainerName(e, "mcoa-gateway"))
-
-	dex = newDexService(e)
+// Tenants use mTLS only (no Dex/OIDC).
+func startBaseServices(t *testing.T, e e2e.Environment) (rateLimiterAddr string) {
 	gubernator := newGubernatorService(e)
 	opa := newOPAService(e)
-	testutil.Ok(t, e2e.StartAndWaitReady(dex, gubernator, opa))
+	testutil.Ok(t, e2e.StartAndWaitReady(gubernator, opa))
 
-	createTenantsYAML(t, e, dex.InternalEndpoint("https"), opa.InternalEndpoint("http"), getContainerName(e, "mcoa-gateway"))
+	createTenantsYAML(t, e)
 
-	token, err := obtainToken(dex.Endpoint("https"), getContainerName(e, "dex"), getTLSClientConfig(t, e))
-	testutil.Ok(t, err)
-
-	return dex, token, gubernator.InternalEndpoint("grpc")
-}
-
-func newDexService(e e2e.Environment) *e2emon.InstrumentedRunnable {
-	ports := map[string]int{
-		"https":          5556,
-		"http-telemetry": 5558,
-	}
-
-	return e2emon.AsInstrumented(e.Runnable("dex").WithPorts(ports).Init(
-		e2e.StartOptions{
-			Image:   dexImage,
-			Command: e2e.NewCommand("dex", "serve", filepath.Join(e.SharedDir(), configSharedDir, "dex.yaml")),
-			Readiness: e2e.NewCmdReadinessProbe(e2e.NewCommand(
-				"wget",
-				"--no-check-certificate",
-				"--quiet",
-				"-O", "/dev/null",
-				"https://127.0.0.1:5556/dex/.well-known/openid-configuration",
-			)),
-			User: strconv.Itoa(os.Getuid()),
-		},
-	), "http-telemetry")
+	return gubernator.InternalEndpoint("grpc")
 }
 
 func newGubernatorService(e e2e.Environment) *e2emon.InstrumentedRunnable {
@@ -269,11 +245,15 @@ func newThanosReceiveService(e e2e.Environment) *e2emon.InstrumentedRunnable {
 }
 
 func newAlertmanagerService(e e2e.Environment) *e2emon.InstrumentedRunnable {
+	return newNamedAlertmanagerService(e, "alertmanager")
+}
+
+func newNamedAlertmanagerService(e e2e.Environment, name string) *e2emon.InstrumentedRunnable {
 	ports := map[string]int{
 		"http": 9093,
 	}
 
-	return e2emon.AsInstrumented(e.Runnable("alertmanager").WithPorts(ports).Init(
+	return e2emon.AsInstrumented(e.Runnable(name).WithPorts(ports).Init(
 		e2e.StartOptions{
 			Image:     alertmanagerImage,
 			Readiness: e2e.NewHTTPReadinessProbe("http", "/-/ready", 200, 200),
@@ -368,6 +348,8 @@ type apiOptions struct {
 	metricsWriteEndpoint        string
 	metricsRulesEndpoint        string
 	alertmanagerEndpoint        string
+	alertmanagerFanoutEndpoints []string
+	alertmanagerAccessorToken   string
 	ratelimiterAddr             string
 	probesEndpoint              string
 	tracesWriteOTLPGRPCEndpoint string
@@ -449,6 +431,20 @@ func withAlertmanagerEndpoint(alertmanagerEndpoint string) apiOption {
 	}
 }
 
+// withAlertmanagerFanoutEndpoints enables POST /api/alertmanager/v2 fanout writes.
+// Pass one URL per Alertmanager replica (--alertmanager.endpoint, repeatable).
+func withAlertmanagerFanoutEndpoints(endpoints ...string) apiOption {
+	return func(o *apiOptions) {
+		o.alertmanagerFanoutEndpoints = append(o.alertmanagerFanoutEndpoints, endpoints...)
+	}
+}
+
+func withAlertmanagerAccessorToken(token string) apiOption {
+	return func(o *apiOptions) {
+		o.alertmanagerAccessorToken = token
+	}
+}
+
 func withRateLimiter(addr string) apiOption {
 	return func(o *apiOptions) {
 		o.ratelimiterAddr = addr
@@ -476,9 +472,11 @@ func newObservatoriumAPIService(
 		"--tls.server.cert-file":            filepath.Join(e.SharedDir(), certsSharedDir, "server.pem"),
 		"--tls.server.key-file":             filepath.Join(e.SharedDir(), certsSharedDir, "server.key"),
 		"--tls.healthchecks.server-ca-file": filepath.Join(e.SharedDir(), certsSharedDir, "ca.pem"),
-		"--rbac.config":                     filepath.Join(e.SharedDir(), configSharedDir, "rbac.yaml"),
-		"--tenants.config":                  filepath.Join(e.SharedDir(), configSharedDir, "tenants.yaml"),
-		"--log.level":                       logLevelDebug,
+		// Verify client certs when presented so write-path mTLS OU extraction is meaningful.
+		"--tls.client-ca-file":   filepath.Join(e.SharedDir(), certsSharedDir, "ca.pem"),
+		"--tls.client-auth-type": "VerifyClientCertIfGiven",
+		"--tenants.config":       filepath.Join(e.SharedDir(), configSharedDir, "tenants.yaml"),
+		"--log.level":            logLevelDebug,
 	})
 
 	if opts.metricsReadEndpoint != "" && opts.metricsWriteEndpoint != "" {
@@ -492,6 +490,17 @@ func newObservatoriumAPIService(
 
 	if opts.alertmanagerEndpoint != "" {
 		args = append(args, "--metrics.alertmanager.endpoint="+opts.alertmanagerEndpoint)
+	}
+
+	for _, ep := range opts.alertmanagerFanoutEndpoints {
+		args = append(args, "--alertmanager.endpoint="+ep)
+	}
+	if opts.alertmanagerAccessorToken != "" {
+		tokenPath := filepath.Join(e.SharedDir(), configSharedDir, "alertmanager-accessor.token")
+		if err := os.WriteFile(tokenPath, []byte(opts.alertmanagerAccessorToken), 0o600); err != nil {
+			return nil, err
+		}
+		args = append(args, "--alertmanager.accessor-token-file="+tokenPath)
 	}
 
 	if opts.logsEndpoint != "" {
@@ -544,7 +553,7 @@ func newObservatoriumAPIService(
 
 	return e2emon.AsInstrumented(e.Runnable("mcoa-gateway").WithPorts(ports).Init(
 		e2e.StartOptions{
-			Image:     apiImage,
+			Image:     apiImage(),
 			Command:   e2e.NewCommandWithoutEntrypoint("mcoa-gateway", args...),
 			Readiness: e2e.NewHTTPReadinessProbe("http-internal", "/ready", 200, 200),
 			User:      strconv.Itoa(os.Getuid()),
@@ -560,8 +569,13 @@ type runParams struct {
 }
 
 type upOptions struct {
-	token     string
-	runParams *runParams
+	token          string
+	runParams      *runParams
+	labels         string
+	tenant         string
+	tenantHeader   string
+	clientCertFile string
+	clientKeyFile  string
 }
 
 type upOption func(*upOptions)
@@ -578,6 +592,26 @@ func withRunParameters(params *runParams) upOption {
 	}
 }
 
+func withLabels(labels string) upOption {
+	return func(o *upOptions) {
+		o.labels = labels
+	}
+}
+
+func withTenant(header, tenant string) upOption {
+	return func(o *upOptions) {
+		o.tenantHeader = header
+		o.tenant = tenant
+	}
+}
+
+func withClientCert(certFile, keyFile string) upOption {
+	return func(o *upOptions) {
+		o.clientCertFile = certFile
+		o.clientKeyFile = keyFile
+	}
+}
+
 func newUpRun(
 	env e2e.Environment,
 	name string,
@@ -585,7 +619,11 @@ func newUpRun(
 	readEndpoint, writeEndpoint string,
 	options ...upOption,
 ) (*e2emon.InstrumentedRunnable, error) {
-	opts := upOptions{}
+	opts := upOptions{
+		labels:         `_id="test"`,
+		clientCertFile: filepath.Join(env.SharedDir(), certsSharedDir, "client.pem"),
+		clientKeyFile:  filepath.Join(env.SharedDir(), certsSharedDir, "client.key"),
+	}
 	for _, o := range options {
 		o(&opts)
 	}
@@ -599,13 +637,13 @@ func newUpRun(
 		"--listen":                      "0.0.0.0:" + strconv.Itoa(ports["http"]),
 		"--endpoint-type":               string(tt),
 		"--tls-ca-file":                 filepath.Join(env.SharedDir(), certsSharedDir, "ca.pem"),
-		"--tls-client-cert-file":        filepath.Join(env.SharedDir(), certsSharedDir, "client.pem"),
-		"--tls-client-private-key-file": filepath.Join(env.SharedDir(), certsSharedDir, "client.key"),
+		"--tls-client-cert-file":        opts.clientCertFile,
+		"--tls-client-private-key-file": opts.clientKeyFile,
 		"--endpoint-read":               readEndpoint,
 		"--endpoint-write":              writeEndpoint,
 		"--log.level":                   logLevelError,
 		"--name":                        "observatorium_write",
-		"--labels":                      "_id=\"test\"",
+		"--labels":                      opts.labels,
 	})
 
 	if tt == logs {
@@ -614,6 +652,13 @@ func newUpRun(
 
 	if opts.token != "" {
 		args = append(args, "--token="+opts.token)
+	}
+
+	if opts.tenant != "" {
+		args = append(args, "--tenant="+opts.tenant)
+		if opts.tenantHeader != "" {
+			args = append(args, "--tenant-header="+opts.tenantHeader)
+		}
 	}
 
 	if opts.runParams != nil {

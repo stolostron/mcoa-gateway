@@ -1,4 +1,4 @@
-//go:build integration || interactive
+//go:build integration
 
 package e2e
 
@@ -6,11 +6,8 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,72 +40,14 @@ func prepareConfigsAndCerts(t *testing.T, e e2e.Environment) {
 				"127.0.0.1",
 				"host.docker.internal",
 			},
-			getContainerName(e, "dex"),
-			[]string{
-				getContainerName(e, "dex"),
-				"127.0.0.1",
-				"host.docker.internal",
-			},
 		),
 	)
 
 	testutil.Ok(t, exec.Command("cp", "-r", "../config", filepath.Join(e.SharedDir(), configSharedDir)).Run())
 }
 
-// obtainToken obtains a bearer token needed for communication with the API.
-// dexTLSHost is the Dex DNS name from the test CA (e.g. {network}-dex); set it so TLS verifies the
-// server cert when the TCP dial target is 127.0.0.1 or host.docker.internal (e2e.Endpoint).
-func obtainToken(endpoint, dexTLSHost string, tlsConf *tls.Config) (string, error) {
-	type token struct {
-		IDToken string `json:"id_token"`
-	}
-
-	tlsClient := tlsConf.Clone()
-	if dexTLSHost != "" {
-		tlsClient.ServerName = dexTLSHost
-	}
-
-	data := url.Values{}
-	data.Add("grant_type", "password")
-	data.Add("username", "admin@example.com")
-	data.Add("password", "password")
-	data.Add("client_id", "test")
-	data.Add("client_secret", "ZXhhbXBsZS1hcHAtc2VjcmV0")
-	data.Add("scope", "openid email")
-
-	r, err := http.NewRequest(http.MethodPost, "https://"+endpoint+"/dex/token", strings.NewReader(data.Encode()))
-	if err != nil {
-		return "", fmt.Errorf("cannot create new request: %v\n", err)
-	}
-	r.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-
-	c := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: tlsClient,
-		},
-	}
-
-	res, err := c.Do(r)
-	if err != nil {
-		return "", fmt.Errorf("request failed: %v\n", err)
-	}
-	defer res.Body.Close()
-
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return "", fmt.Errorf("cannot read body: %v\n", err)
-	}
-
-	var t token
-	if err := json.Unmarshal(body, &t); err != nil {
-		return "", fmt.Errorf("cannot unmarshal token : %v\n", err)
-	}
-
-	return t.IDToken, nil
-}
-
 // getContainerName returns the Docker DNS hostname for a service in this environment.
-// It must match e2e's naming ({networkName}-{runnableName}) so TLS SANs and OIDC redirects stay correct.
+// It must match e2e's naming ({networkName}-{runnableName}) so TLS SANs stay correct.
 func getContainerName(e e2e.Environment, serviceName string) string {
 	return e.Name() + "-" + serviceName
 }
@@ -127,6 +66,33 @@ func getTLSClientConfig(t *testing.T, e e2e.Environment) *tls.Config {
 	}
 }
 
+// getTLSClientConfigWithClientCert returns a TLS config that presents a client
+// certificate (needed for write-path mTLS tenant extraction and mTLS read auth).
+func getTLSClientConfigWithClientCert(t *testing.T, e e2e.Environment, certFile, keyFile string) *tls.Config {
+	t.Helper()
+	cfg := getTLSClientConfig(t, e)
+	cert, err := tls.LoadX509KeyPair(
+		filepath.Join(e.SharedDir(), certsSharedDir, certFile),
+		filepath.Join(e.SharedDir(), certsSharedDir, keyFile),
+	)
+	testutil.Ok(t, err)
+	cfg.Certificates = []tls.Certificate{cert}
+	return cfg
+}
+
+// newMTLSAuthClient builds an HTTP client that authenticates with a client cert
+// and sets the read-path tenant header (no bearer token).
+func newMTLSAuthClient(t *testing.T, e e2e.Environment, tenantHeader, tenant, certFile, keyFile string) *http.Client {
+	t.Helper()
+	return &http.Client{Transport: &authRoundTripper{
+		rt: &http.Transport{
+			TLSClientConfig: getTLSClientConfigWithClientCert(t, e, certFile, keyFile),
+		},
+		tenantHeader: tenantHeader,
+		tenant:       tenant,
+	}}
+}
+
 func assertResponse(t *testing.T, response string, expected string) {
 	t.Helper()
 	testutil.Assert(
@@ -136,12 +102,17 @@ func assertResponse(t *testing.T, response string, expected string) {
 	)
 }
 
-type tokenRoundTripper struct {
-	rt    http.RoundTripper
-	token string
+// authRoundTripper attaches the read-path tenant header. Authentication is via
+// the underlying RoundTripper's TLS client certificate.
+type authRoundTripper struct {
+	rt           http.RoundTripper
+	tenantHeader string
+	tenant       string
 }
 
-func (rt *tokenRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
-	r.Header.Add("Authorization", "bearer "+rt.token)
+func (rt *authRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	if rt.tenantHeader != "" && rt.tenant != "" {
+		r.Header.Set(rt.tenantHeader, rt.tenant)
+	}
 	return rt.rt.RoundTrip(r)
 }

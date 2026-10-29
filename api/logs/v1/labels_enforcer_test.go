@@ -80,13 +80,8 @@ func TestEnforceValuesOnLabelValues(t *testing.T) {
 			m := smExpr.Matchers()
 			mExp := smExpected.Matchers()
 
-			sort.Slice(m, func(i, j int) bool {
-				return m[i].Name < m[j].Name
-			})
-
-			sort.Slice(mExp, func(i, j int) bool {
-				return mExp[i].Name < mExp[j].Name
-			})
+			sortMatchers(m)
+			sortMatchers(mExp)
 
 			testutil.Equals(t, matchersToStrings(mExp), matchersToStrings(m))
 		})
@@ -111,7 +106,9 @@ func TestEnforceValuesOnQuery(t *testing.T) {
 				},
 			},
 			urlValues: url.Values{},
-			expValues: url.Values{},
+			expValues: url.Values{
+				"query": []string{`{kubernetes_namespace_name=~"log-test-0"}`},
+			},
 		},
 		{
 			desc: "query with no matcher overlap",
@@ -159,6 +156,38 @@ func TestEnforceValuesOnQuery(t *testing.T) {
 			},
 			expValues: url.Values{
 				"query": []string{"{kubernetes_namespace_name=~\"ns-name|another-ns-name|openshift-.*\", kubernetes_container_name=\"logger\", kubernetes_pod_name=\"pod-name\"}"},
+			},
+		},
+		{
+			desc: "not-equal selector kept alongside tenant regex",
+			accessMatchers: []*labels.Matcher{
+				{
+					Type:  labels.MatchRegexp,
+					Name:  "tenant_id",
+					Value: "a|b",
+				},
+			},
+			urlValues: url.Values{
+				"query": []string{`{app="api", tenant_id!="a"}`},
+			},
+			expValues: url.Values{
+				"query": []string{`{app="api", tenant_id!="a", tenant_id=~"a|b"}`},
+			},
+		},
+		{
+			desc: "caller regex kept alongside broader tenant regex",
+			accessMatchers: []*labels.Matcher{
+				{
+					Type:  labels.MatchRegexp,
+					Name:  "tenant_id",
+					Value: "a|b",
+				},
+			},
+			urlValues: url.Values{
+				"query": []string{`{app="api", tenant_id=~"a"}`},
+			},
+			expValues: url.Values{
+				"query": []string{`{app="api", tenant_id=~"a", tenant_id=~"a|b"}`},
 			},
 		},
 		{
@@ -217,12 +246,6 @@ func TestEnforceValuesOnQuery(t *testing.T) {
 			v, err := enforceValues(authzData, ou)
 			testutil.Ok(t, err)
 
-			if len(tc.urlValues.Encode()) == 0 {
-				// Url values are empty, non need to do more checks.
-				testutil.Equals(t, len(v), 0)
-				return
-			}
-
 			u, err := url.ParseQuery(v)
 			testutil.Ok(t, err)
 
@@ -241,13 +264,8 @@ func TestEnforceValuesOnQuery(t *testing.T) {
 			m := smExpr.Matchers()
 			mExp := smExpected.Matchers()
 
-			sort.Slice(m, func(i, j int) bool {
-				return m[i].Name < m[j].Name
-			})
-
-			sort.Slice(mExp, func(i, j int) bool {
-				return mExp[i].Name < mExp[j].Name
-			})
+			sortMatchers(m)
+			sortMatchers(mExp)
 
 			testutil.Equals(t, matchersToStrings(mExp), matchersToStrings(m))
 
@@ -258,6 +276,18 @@ func TestEnforceValuesOnQuery(t *testing.T) {
 			}
 		})
 	}
+}
+
+func sortMatchers(m []*labels.Matcher) {
+	sort.Slice(m, func(i, j int) bool {
+		if m[i].Name != m[j].Name {
+			return m[i].Name < m[j].Name
+		}
+		if m[i].Type != m[j].Type {
+			return m[i].Type < m[j].Type
+		}
+		return m[i].Value < m[j].Value
+	})
 }
 
 func matchersToStrings(m []*labels.Matcher) []string {

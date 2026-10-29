@@ -23,6 +23,7 @@ roles:
 - name: read-attacker
   resources:
   - metrics
+  - logs
   tenants:
   - test-attacker
   permissions:
@@ -46,28 +47,35 @@ roles:
   - read
   - write
 roleBindings:
+# Subjects are certificate OUs (stashed as groups by the mTLS authenticator).
 - name: test-oidc
   roles:
   - read-write-oidc
   - read-attacker
   subjects:
-  - name: admin@example.com
-    kind: user
+  - name: test-oidc
+    kind: group
 - name: another-tenant
   roles:
     - read-write-another-tenant
   subjects:
-    - name: admin@example.com
-      kind: user
+    - name: another-tenant
+      kind: group
 - name: test-mtls
   roles:
   - read-write-mtls
   subjects:
-  - name: test
+  - name: test-mtls
+    kind: group
+- name: test-attacker
+  roles:
+  - read-attacker
+  subjects:
+  - name: test-attacker
     kind: group
 - name: test-probes
   roles:
   - read-write-probes
   subjects:
-  - name: admin@example.com
-    kind: user
+  - name: test-probes
+    kind: group

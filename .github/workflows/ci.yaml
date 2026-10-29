@@ -68,6 +68,34 @@ jobs:
       - name: Run unit tests
         run: make test-unit
 
+  e2e:
+    runs-on: ubuntu-latest
+    name: End-to-end tests
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.x'
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/go/bin
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Run end-to-end tests
+        # container-test builds with docker into E2E_IMAGE (mcoa-gateway:e2e).
+        # Do not use podman here: efficientgo/e2e only talks to the docker CLI.
+        run: make test-e2e
+
   lint:
     runs-on: ubuntu-latest
     name: Linters (Static Analysis) for Go
