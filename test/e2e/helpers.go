@@ -1,4 +1,4 @@
-//go:build integration || interactive
+//go:build integration
 
 package e2e
 
@@ -127,6 +127,20 @@ func getTLSClientConfig(t *testing.T, e e2e.Environment) *tls.Config {
 	}
 }
 
+// getTLSClientConfigWithClientCert returns a TLS config that presents a client
+// certificate (needed for write-path mTLS tenant extraction).
+func getTLSClientConfigWithClientCert(t *testing.T, e e2e.Environment, certFile, keyFile string) *tls.Config {
+	t.Helper()
+	cfg := getTLSClientConfig(t, e)
+	cert, err := tls.LoadX509KeyPair(
+		filepath.Join(e.SharedDir(), certsSharedDir, certFile),
+		filepath.Join(e.SharedDir(), certsSharedDir, keyFile),
+	)
+	testutil.Ok(t, err)
+	cfg.Certificates = []tls.Certificate{cert}
+	return cfg
+}
+
 func assertResponse(t *testing.T, response string, expected string) {
 	t.Helper()
 	testutil.Assert(
@@ -136,12 +150,32 @@ func assertResponse(t *testing.T, response string, expected string) {
 	)
 }
 
+// authRoundTripper attaches a bearer token and optional tenant header used by
+// the current read-path contract (tenant comes from the header, not the URL).
+type authRoundTripper struct {
+	rt           http.RoundTripper
+	token        string
+	tenantHeader string
+	tenant       string
+}
+
+func (rt *authRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	if rt.token != "" {
+		r.Header.Set("Authorization", "Bearer "+rt.token)
+	}
+	if rt.tenantHeader != "" && rt.tenant != "" {
+		r.Header.Set(rt.tenantHeader, rt.tenant)
+	}
+	return rt.rt.RoundTrip(r)
+}
+
+// tokenRoundTripper is kept for callers that only need a bearer token.
 type tokenRoundTripper struct {
 	rt    http.RoundTripper
 	token string
 }
 
 func (rt *tokenRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
-	r.Header.Add("Authorization", "bearer "+rt.token)
+	r.Header.Set("Authorization", "Bearer "+rt.token)
 	return rt.rt.RoundTrip(r)
 }

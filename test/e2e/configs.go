@@ -1,4 +1,4 @@
-//go:build integration || interactive
+//go:build integration
 
 package e2e
 
@@ -24,17 +24,18 @@ const (
 	traces         testType = "traces"
 	tracesTemplate testType = "tracesTemplate"
 	tracesTempo    testType = "tracesTempo"
-	tenants        testType = "tenants"
-	interactive    testType = "interactive"
 	probes         testType = "probes"
 
 	certsSharedDir  = "certs"
 	configSharedDir = "config"
 
 	defaultTenantID = "1610b0c3-c509-4592-a256-a1871353dbfa"
-	mtlsTenantID    = "845cdfd9-f936-443c-979c-2ee7dc91f646"
 
 	defaultTenantName = "test-oidc"
+	anotherTenantName = "another-tenant"
+
+	metricsTenantHeader = "THANOS-TENANT"
+	logsTenantHeader    = "X-Scope-OrgID"
 )
 
 const tenantsYamlTpl = `

@@ -95,51 +95,65 @@ func metricSelectorParam(path string) string {
 }
 
 func enforceRequestQueryLabels(e *injectproxy.PromQLEnforcer, paramName string, w http.ResponseWriter, r *http.Request) bool {
-	// The `query` can come in the URL query string and/or the POST body.
-	// For this reason, we need to try to enforcing in both places.
-	// Note: a POST request may include some values in the URL query string
-	// and others in the body. If both locations include a `query`, then
-	// enforce in both places.
+	// Selectors may live in the URL query, the POST body, or both. Prometheus
+	// clients (DoGetFallback) usually POST form bodies with an empty URL query.
+	// Inventing a tenant-only match[] on an empty URL OR's with the body
+	// selectors; Thanos then warns "no matchers specified (excluding external
+	// labels)" because tenant_id is an external label on Receive.
+	if r.Method == http.MethodPost {
+		if err := r.ParseForm(); err != nil {
+			httperr.PrometheusAPIError(w, fmt.Sprintf("could not parse form: %v", err), http.StatusInternalServerError)
+			return false
+		}
+
+		bodyHasParam := len(r.PostForm[paramName]) > 0
+		urlHasParam := len(r.URL.Query()[paramName]) > 0
+
+		if bodyHasParam || !urlHasParam {
+			q, foundForm, err := enforceQueryValues(e, paramName, cloneURLValues(r.PostForm))
+			if err != nil {
+				httperr.PrometheusAPIError(w, fmt.Sprintf("could not enforce labels: %v", err), http.StatusBadRequest)
+				return false
+			}
+			_ = r.Body.Close()
+			r.Body = io.NopCloser(strings.NewReader(q))
+			r.ContentLength = int64(len(q))
+			r.Header.Set("Content-Length", strconv.Itoa(len(q)))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			// Drop any URL copy of the selector so it cannot OR with the body.
+			urlQ := r.URL.Query()
+			urlQ.Del(paramName)
+			r.URL.RawQuery = urlQ.Encode()
+
+			if !foundForm {
+				httperr.PrometheusAPIError(w, "no query found", http.StatusBadRequest)
+				return false
+			}
+			return true
+		}
+	}
+
 	q, foundQuery, err := enforceQueryValues(e, paramName, r.URL.Query())
 	if err != nil {
 		httperr.PrometheusAPIError(w, fmt.Sprintf("could not enforce labels: %v", err), http.StatusBadRequest)
-
 		return false
 	}
-
 	r.URL.RawQuery = q
 
-	var foundForm bool
-	// Enforce the query in the POST body if needed.
-	if r.Method == http.MethodPost {
-		if err := r.ParseForm(); err != nil {
-			// We're returning server error here because we cannot ensure this is a bad request.
-			httperr.PrometheusAPIError(w, fmt.Sprintf("could not parse form: %v", err), http.StatusInternalServerError)
-
-			return false
-		}
-
-		q, foundForm, err = enforceQueryValues(e, paramName, r.PostForm)
-		if err != nil {
-			httperr.PrometheusAPIError(w, fmt.Sprintf("could not enforce labels: %v", err), http.StatusBadRequest)
-
-			return false
-		}
-		// We are replacing request body, close previous one (ParseForm ensures it is read fully and not nil).
-		_ = r.Body.Close()
-		r.Body = io.NopCloser(strings.NewReader(q))
-		r.ContentLength = int64(len(q))
-		r.Header.Set("Content-Length", strconv.Itoa(len(q)))
-	}
-
-	// If no query was found, return early.
-	if !foundQuery && !foundForm {
+	if !foundQuery {
 		httperr.PrometheusAPIError(w, "no query found", http.StatusBadRequest)
-
 		return false
 	}
-
 	return true
+}
+
+func cloneURLValues(v url.Values) url.Values {
+	out := make(url.Values, len(v))
+	for k, vals := range v {
+		out[k] = append([]string(nil), vals...)
+	}
+	return out
 }
 
 // Adapted from

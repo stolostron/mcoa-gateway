@@ -23,6 +23,7 @@ roles:
 - name: read-attacker
   resources:
   - metrics
+  - logs
   tenants:
   - test-attacker
   permissions:

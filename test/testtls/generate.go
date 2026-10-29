@@ -24,6 +24,14 @@ type certBundle struct {
 	key  []byte
 }
 
+// ClientCert describes an mTLS client certificate to issue.
+// OrganizationalUnit[0] is used by the gateway as the write-path tenant.
+type ClientCert struct {
+	FilePrefix string // written as {FilePrefix}.pem / {FilePrefix}.key
+	CommonName string
+	OU         string
+}
+
 func GenerateCerts(
 	path string,
 	apiCommonName string,
@@ -31,11 +39,22 @@ func GenerateCerts(
 	dexCommonName string,
 	dexSANs []string,
 ) error {
+	return GenerateCertsWithClients(path, apiCommonName, apiSANs, dexCommonName, dexSANs,
+		ClientCert{FilePrefix: "client", CommonName: "up", OU: "test-oidc"},
+		ClientCert{FilePrefix: "client-another-tenant", CommonName: "up-another", OU: "another-tenant"},
+	)
+}
+
+func GenerateCertsWithClients(
+	path string,
+	apiCommonName string,
+	apiSANs []string,
+	dexCommonName string,
+	dexSANs []string,
+	clients ...ClientCert,
+) error {
 	var (
-		caCommonName     = "observatorium"
-		clientCommonName = "up"
-		clientSANs       = "up"
-		clientGroups     = "test"
+		caCommonName = "observatorium"
 	)
 
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
@@ -103,26 +122,30 @@ func GenerateCerts(
 	if err != nil {
 		return err
 	}
-	clientBundle, err := generateCert(caParsed, caPrivKey, true, clientCommonName, []string{clientSANs}, []string{clientGroups})
-	if err != nil {
-		return err
-	}
 
-	for file, content := range map[string][]byte{
+	files := map[string][]byte{
 		"ca.key":     caBundle.key,
 		"ca.pem":     caBundle.cert,
 		"server.key": apiBundle.key,
 		"server.pem": apiBundle.cert,
 		"dex.key":    dexBundle.key,
 		"dex.pem":    dexBundle.cert,
-		"client.key": clientBundle.key,
-		"client.pem": clientBundle.cert,
-	} {
-		// Write certificates
-		if err := os.MkdirAll(path, 0o750); err != nil {
-			return fmt.Errorf("mkdir %s: %v", path, err)
-		}
+	}
 
+	for _, c := range clients {
+		bundle, err := generateCert(caParsed, caPrivKey, true, c.CommonName, []string{c.CommonName}, []string{c.OU})
+		if err != nil {
+			return err
+		}
+		files[c.FilePrefix+".pem"] = bundle.cert
+		files[c.FilePrefix+".key"] = bundle.key
+	}
+
+	if err := os.MkdirAll(path, 0o750); err != nil {
+		return fmt.Errorf("mkdir %s: %v", path, err)
+	}
+
+	for file, content := range files {
 		if err := os.WriteFile(filepath.Join(path, file), content, 0o644); err != nil {
 			return fmt.Errorf("write file %s: %v", file, err)
 		}

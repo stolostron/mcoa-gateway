@@ -1,9 +1,11 @@
 package v1
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/prometheus/prometheus/model/labels"
@@ -151,6 +153,51 @@ func enforceMetrics(t *testing.T, tenant, path string, params url.Values) url.Va
 		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
 	}
 	return got
+}
+
+func TestMetricsEnforcerPostBodyKeepsSelectorsOffURL(t *testing.T) {
+	// Mimic prometheus client_golang DoGetFallback: POST form body, empty URL query.
+	var gotBody string
+	var gotURLQuery url.Values
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotURLQuery = r.URL.Query()
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		gotBody = string(b)
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := authentication.WithTenantFromHeader("THANOS-TENANT")(
+		authorization.WithTenantLabel("tenant_id")(
+			WithEnforceAuthorizationLabels()(inner),
+		),
+	)
+
+	form := url.Values{
+		"match[]": {`{__name__="observatorium_write",_id="test"}`},
+		"start":   {"1"},
+		"end":     {"2"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/metrics/v1/api/v1/series", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("THANOS-TENANT", "test-oidc")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
+	}
+	if gotURLQuery.Get("match[]") != "" {
+		t.Fatalf("URL still has match[]=%q; tenant-only URL matcher would OR with the body", gotURLQuery.Get("match[]"))
+	}
+	body, err := url.ParseQuery(gotBody)
+	if err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	ms := promMatchers(t, body.Get("match[]"))
+	requirePromMatcher(t, ms, "tenant_id", labels.MatchEqual, "test-oidc")
+	requirePromMatcher(t, ms, "__name__", labels.MatchEqual, "observatorium_write")
+	requirePromMatcher(t, ms, "_id", labels.MatchEqual, "test")
 }
 
 func promMatchers(t *testing.T, selector string) []*labels.Matcher {

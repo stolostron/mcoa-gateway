@@ -677,10 +677,13 @@ func main() {
 				}
 
 				metricsHandlerOptions = append(metricsHandlerOptions,
-					// Keep the pre-existing middleware behavior for all non-receive
-					// metrics routes, including rules and Alertmanager endpoints.
+					// Auth on all non-receive routes (including Alertmanager). PromQL
+					// label enforcement only on query/read/ui — not on silence POST,
+					// which has a JSON body the enforcer would overwrite.
 					metricsv1.WithGlobalMiddleware(metricsReadMiddlewares...),
-					metricsv1.WithGlobalMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
+					metricsv1.WithQueryMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
+					metricsv1.WithReadMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
+					metricsv1.WithUIMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
 				)
 
 				r.Group(func(r chi.Router) {
@@ -788,6 +791,10 @@ func main() {
 							logsv1.WithReadMiddleware(authentication.WithTenantMiddlewares(pm.Middlewares)),
 							logsv1.WithReadMiddleware(authorization.WithTenantLabel(cfg.logs.tenantLabel)),
 							logsv1.WithReadMiddleware(logsv1.WithEnforceAuthorizationLabels()),
+							// Rules-specific enforcement on top of the shared read/write chains.
+							logsv1.WithRulesReadMiddleware(logsv1.WithEnforceTenantAsRuleNamespace()),
+							logsv1.WithRulesWriteMiddleware(logsv1.WithEnforceTenantAsRuleNamespace()),
+							logsv1.WithRulesWriteMiddleware(logsv1.WithEnforceRuleLabels(cfg.logs.tenantLabel)),
 							logsv1.WithRulesLabelFilters(cfg.logs.rulesLabelFilters),
 						),
 					)

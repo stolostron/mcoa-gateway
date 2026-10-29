@@ -1,4 +1,4 @@
-//go:build integration || interactive
+//go:build integration
 
 package e2e
 
@@ -476,9 +476,11 @@ func newObservatoriumAPIService(
 		"--tls.server.cert-file":            filepath.Join(e.SharedDir(), certsSharedDir, "server.pem"),
 		"--tls.server.key-file":             filepath.Join(e.SharedDir(), certsSharedDir, "server.key"),
 		"--tls.healthchecks.server-ca-file": filepath.Join(e.SharedDir(), certsSharedDir, "ca.pem"),
-		"--rbac.config":                     filepath.Join(e.SharedDir(), configSharedDir, "rbac.yaml"),
-		"--tenants.config":                  filepath.Join(e.SharedDir(), configSharedDir, "tenants.yaml"),
-		"--log.level":                       logLevelDebug,
+		// Verify client certs when presented so write-path mTLS OU extraction is meaningful.
+		"--tls.client-ca-file":   filepath.Join(e.SharedDir(), certsSharedDir, "ca.pem"),
+		"--tls.client-auth-type": "VerifyClientCertIfGiven",
+		"--tenants.config":       filepath.Join(e.SharedDir(), configSharedDir, "tenants.yaml"),
+		"--log.level":            logLevelDebug,
 	})
 
 	if opts.metricsReadEndpoint != "" && opts.metricsWriteEndpoint != "" {
@@ -560,8 +562,13 @@ type runParams struct {
 }
 
 type upOptions struct {
-	token     string
-	runParams *runParams
+	token          string
+	runParams      *runParams
+	labels         string
+	tenant         string
+	tenantHeader   string
+	clientCertFile string
+	clientKeyFile  string
 }
 
 type upOption func(*upOptions)
@@ -578,6 +585,26 @@ func withRunParameters(params *runParams) upOption {
 	}
 }
 
+func withLabels(labels string) upOption {
+	return func(o *upOptions) {
+		o.labels = labels
+	}
+}
+
+func withTenant(header, tenant string) upOption {
+	return func(o *upOptions) {
+		o.tenantHeader = header
+		o.tenant = tenant
+	}
+}
+
+func withClientCert(certFile, keyFile string) upOption {
+	return func(o *upOptions) {
+		o.clientCertFile = certFile
+		o.clientKeyFile = keyFile
+	}
+}
+
 func newUpRun(
 	env e2e.Environment,
 	name string,
@@ -585,7 +612,11 @@ func newUpRun(
 	readEndpoint, writeEndpoint string,
 	options ...upOption,
 ) (*e2emon.InstrumentedRunnable, error) {
-	opts := upOptions{}
+	opts := upOptions{
+		labels:         `_id="test"`,
+		clientCertFile: filepath.Join(env.SharedDir(), certsSharedDir, "client.pem"),
+		clientKeyFile:  filepath.Join(env.SharedDir(), certsSharedDir, "client.key"),
+	}
 	for _, o := range options {
 		o(&opts)
 	}
@@ -599,13 +630,13 @@ func newUpRun(
 		"--listen":                      "0.0.0.0:" + strconv.Itoa(ports["http"]),
 		"--endpoint-type":               string(tt),
 		"--tls-ca-file":                 filepath.Join(env.SharedDir(), certsSharedDir, "ca.pem"),
-		"--tls-client-cert-file":        filepath.Join(env.SharedDir(), certsSharedDir, "client.pem"),
-		"--tls-client-private-key-file": filepath.Join(env.SharedDir(), certsSharedDir, "client.key"),
+		"--tls-client-cert-file":        opts.clientCertFile,
+		"--tls-client-private-key-file": opts.clientKeyFile,
 		"--endpoint-read":               readEndpoint,
 		"--endpoint-write":              writeEndpoint,
 		"--log.level":                   logLevelError,
 		"--name":                        "observatorium_write",
-		"--labels":                      "_id=\"test\"",
+		"--labels":                      opts.labels,
 	})
 
 	if tt == logs {
@@ -614,6 +645,13 @@ func newUpRun(
 
 	if opts.token != "" {
 		args = append(args, "--token="+opts.token)
+	}
+
+	if opts.tenant != "" {
+		args = append(args, "--tenant="+opts.tenant)
+		if opts.tenantHeader != "" {
+			args = append(args, "--tenant-header="+opts.tenantHeader)
+		}
 	}
 
 	if opts.runParams != nil {
