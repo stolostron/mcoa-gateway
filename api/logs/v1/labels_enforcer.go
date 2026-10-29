@@ -79,9 +79,16 @@ func enforceRequestLogQL(mInfo AuthzResponseData, r *http.Request) error {
 	if err := r.ParseForm(); err != nil {
 		return fmt.Errorf("could not parse form: %w", err)
 	}
-	body, err := enforceValuesOnLogQL(mInfo, r.PostForm, logQLParam(r.URL.Path))
-	if err != nil {
-		return err
+	// ParseForm consumes the body. Always restore it so the proxy can forward
+	// non-selector fields (e.g. limit). Only enforce a body selector when the
+	// caller supplied one; otherwise body precedence would invent a tenant-only
+	// query and override an already-enforced URL selector.
+	body := r.PostForm.Encode()
+	if len(r.PostForm[logQLParam(r.URL.Path)]) > 0 {
+		body, err = enforceValuesOnLogQL(mInfo, r.PostForm, logQLParam(r.URL.Path))
+		if err != nil {
+			return err
+		}
 	}
 	_ = r.Body.Close()
 	r.Body = io.NopCloser(strings.NewReader(body))
@@ -132,14 +139,12 @@ func enforceValuesOnLogQL(mInfo AuthzResponseData, v url.Values, paramName strin
 		return v.Encode(), nil
 	}
 
+	// Only enforce on StreamMatcherExpr: LogQueryExpr.Walk also visits its nested
+	// stream matcher, and combining at both levels would duplicate authz matchers
+	// once non-equality caller filters are retained alongside them.
 	expr.Walk(func(expr interface{}) {
-		switch le := expr.(type) {
-		case *logqlv2.LogQueryExpr:
-			matchers := combineLabelMatchers(le.Matchers(), lm)
-			le.SetMatchers(matchers)
-		case *logqlv2.StreamMatcherExpr:
-			matchers := combineLabelMatchers(le.Matchers(), lm)
-			le.SetMatchers(matchers)
+		if le, ok := expr.(*logqlv2.StreamMatcherExpr); ok {
+			le.SetMatchers(combineLabelMatchers(le.Matchers(), lm))
 		}
 	})
 
@@ -158,6 +163,11 @@ func combineLabelMatchers(queryMatchers, authzMatchers []*labels.Matcher) []*lab
 	for _, am := range authzMatchers {
 		qm := queryMatchersMap[am.Name]
 		if qm == nil || qm.Type != labels.MatchEqual || !am.Matches(qm.Value) {
+			// Keep the caller's non-equality filter (=~, !=, !~) so it still
+			// narrows within the authorization matcher instead of being dropped.
+			if qm != nil && qm.Type != labels.MatchEqual {
+				matchers = append(matchers, qm)
+			}
 			queryMatchersMap[am.Name] = am
 		}
 	}

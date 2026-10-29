@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	e2emon "github.com/efficientgo/e2e/monitoring"
 	"github.com/efficientgo/e2e/monitoring/matchers"
@@ -126,6 +128,114 @@ func TestLogs(t *testing.T) {
 		assertGatewayLogsQueryEmpty(t, mtlsClient, gatewayQuery, `{_id="test"}`)
 		assertGatewayLogsQueryEmpty(t, attackerClient, gatewayQuery, `{_id="test"}`)
 
+		gatewayQueryRange := "https://" + api.Endpoint("https") + "/api/logs/v1/loki/api/v1/query_range"
+		t.Run("query_shapes", func(t *testing.T) {
+			for _, tc := range []struct {
+				name      string
+				query     string
+				metric    bool // LogQL metric query (vector/matrix), not log streams
+				want      []string
+				wantEmpty bool
+			}{
+				{
+					name:  "stream_equality",
+					query: `{_id="test"}`,
+					want:  []string{`"tenant_id":"` + defaultTenantName + `"`, "log line 1"},
+				},
+				{
+					name:  "stream_regex",
+					query: `{_id=~"tes.*"}`,
+					want:  []string{`"tenant_id":"` + defaultTenantName + `"`, "log line 1"},
+				},
+				{
+					name:  "line_filter_contains",
+					query: `{_id="test"} |= "log line"`,
+					want:  []string{"log line 1"},
+				},
+				{
+					name:  "line_filter_regex",
+					query: `{_id="test"} |~ "log line [0-9]+"`,
+					want:  []string{"log line 1"},
+				},
+				{
+					name:  "line_filter_not_contains",
+					query: `{_id="test"} != "nomatch"`,
+					want:  []string{"log line 1"},
+				},
+				{
+					name:      "line_filter_excludes_all",
+					query:     `{_id="test"} |= "nomatch"`,
+					wantEmpty: true,
+				},
+				{
+					name:   "count_over_time",
+					query:  `count_over_time({_id="test"}[5m])`,
+					metric: true,
+					want:   []string{`"status":"success"`, `"resultType":"vector"`},
+				},
+				{
+					name:   "rate",
+					query:  `rate({_id="test"}[5m])`,
+					metric: true,
+					want:   []string{`"status":"success"`, `"resultType":"vector"`},
+				},
+				{
+					name:      "cross_tenant_stream",
+					query:     `{_id="test-another"}`,
+					wantEmpty: true,
+				},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					body := doLokiQuery(t, defaultClient, gatewayQuery, "", tc.query)
+					if tc.wantEmpty {
+						testutil.Assert(t, !strings.Contains(body, "log line 1"), "unexpected data for %s: %s", tc.query, body)
+						return
+					}
+					for _, w := range tc.want {
+						assertResponse(t, body, w)
+					}
+					if tc.metric {
+						testutil.Assert(t, strings.Contains(body, `"result":[{`), "expected non-empty metric result for %s: %s", tc.query, body)
+					}
+					testutil.Assert(t, !strings.Contains(body, anotherTenantName), "leaked other tenant in %s", body)
+				})
+			}
+
+			t.Run("query_range_stream", func(t *testing.T) {
+				end := time.Now()
+				start := end.Add(-5 * time.Minute)
+				body := doLokiQueryRange(t, defaultClient, gatewayQueryRange, `{_id="test"}`, start, end)
+				assertResponse(t, body, `"status":"success"`)
+				assertResponse(t, body, "log line 1")
+				assertResponse(t, body, `"tenant_id":"`+defaultTenantName+`"`)
+			})
+
+			t.Run("query_range_metric", func(t *testing.T) {
+				end := time.Now()
+				start := end.Add(-5 * time.Minute)
+				body := doLokiQueryRange(t, defaultClient, gatewayQueryRange, `count_over_time({_id="test"}[1m])`, start, end)
+				assertResponse(t, body, `"status":"success"`)
+				assertResponse(t, body, `"resultType":"matrix"`)
+				testutil.Assert(t, strings.Contains(body, `"result":[{`), "expected matrix samples: %s", body)
+			})
+
+			t.Run("post_form_query", func(t *testing.T) {
+				form := url.Values{"query": {`{_id="test"}`}, "limit": {"10"}}
+				body := doLokiQueryPOST(t, defaultClient, gatewayQuery, form)
+				assertResponse(t, body, "log line 1")
+				assertResponse(t, body, `"tenant_id":"`+defaultTenantName+`"`)
+			})
+
+			t.Run("post_body_params_url_query", func(t *testing.T) {
+				// Selector in URL, other params in body — body must not invent a
+				// tenant-only query that overrides the URL selector.
+				form := url.Values{"limit": {"5"}}
+				body := doLokiQueryPOSTWithURLQuery(t, defaultClient, gatewayQuery, `{_id="test"}`, form)
+				assertResponse(t, body, "log line 1")
+				assertResponse(t, body, `"tenant_id":"`+defaultTenantName+`"`)
+			})
+		})
+
 		noCertClient := &http.Client{Transport: &authRoundTripper{
 			rt:           &http.Transport{TLSClientConfig: getTLSClientConfig(t, e)},
 			tenantHeader: logsTenantHeader,
@@ -226,6 +336,55 @@ func doLokiQuery(t *testing.T, client *http.Client, endpoint, org, query string)
 	testutil.Assert(t, res.StatusCode == http.StatusOK, "status %d", res.StatusCode)
 	body, err := io.ReadAll(res.Body)
 	testutil.Ok(t, err)
+	return string(body)
+}
+
+func doLokiQueryRange(t *testing.T, client *http.Client, endpoint, query string, start, end time.Time) string {
+	t.Helper()
+	r, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	testutil.Ok(t, err)
+	v := url.Values{}
+	v.Set("query", query)
+	v.Set("start", strconv.FormatInt(start.UnixNano(), 10))
+	v.Set("end", strconv.FormatInt(end.UnixNano(), 10))
+	v.Set("limit", "100")
+	r.URL.RawQuery = v.Encode()
+	res, err := client.Do(r)
+	testutil.Ok(t, err)
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	testutil.Ok(t, err)
+	testutil.Assert(t, res.StatusCode == http.StatusOK, "status %d body %s", res.StatusCode, body)
+	return string(body)
+}
+
+func doLokiQueryPOST(t *testing.T, client *http.Client, endpoint string, form url.Values) string {
+	t.Helper()
+	r, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	testutil.Ok(t, err)
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	res, err := client.Do(r)
+	testutil.Ok(t, err)
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	testutil.Ok(t, err)
+	testutil.Assert(t, res.StatusCode == http.StatusOK, "status %d body %s", res.StatusCode, body)
+	return string(body)
+}
+
+func doLokiQueryPOSTWithURLQuery(t *testing.T, client *http.Client, endpoint, query string, form url.Values) string {
+	t.Helper()
+	r, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	testutil.Ok(t, err)
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	v := url.Values{"query": {query}}
+	r.URL.RawQuery = v.Encode()
+	res, err := client.Do(r)
+	testutil.Ok(t, err)
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	testutil.Ok(t, err)
+	testutil.Assert(t, res.StatusCode == http.StatusOK, "status %d body %s", res.StatusCode, body)
 	return string(body)
 }
 

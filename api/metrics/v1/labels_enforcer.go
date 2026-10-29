@@ -109,8 +109,27 @@ func enforceRequestQueryLabels(e *injectproxy.PromQLEnforcer, paramName string, 
 		bodyHasParam := len(r.PostForm[paramName]) > 0
 		urlHasParam := len(r.URL.Query()[paramName]) > 0
 
+		// ParseForm consumes the body. When the selector lives only in the URL,
+		// restore non-selector form fields (e.g. time=) before URL enforcement;
+		// otherwise the proxy forwards an exhausted reader with the original
+		// Content-Length and the transport fails.
+		if !bodyHasParam && urlHasParam {
+			body := r.PostForm.Encode()
+			_ = r.Body.Close()
+			r.Body = io.NopCloser(strings.NewReader(body))
+			r.ContentLength = int64(len(body))
+			r.Header.Set("Content-Length", strconv.Itoa(len(body)))
+		}
+
 		if bodyHasParam || !urlHasParam {
-			q, foundForm, err := enforceQueryValues(e, paramName, cloneURLValues(r.PostForm))
+			bodyParams := cloneURLValues(r.PostForm)
+			// match[] is an OR-list of selectors. When callers put distinct
+			// values in both URL and body, merge them before enforcement so
+			// deleting the URL copy does not drop part of the selection.
+			if paramName == "match[]" {
+				bodyParams[paramName] = append(bodyParams[paramName], r.URL.Query()[paramName]...)
+			}
+			q, foundForm, err := enforceQueryValues(e, paramName, bodyParams)
 			if err != nil {
 				httperr.PrometheusAPIError(w, fmt.Sprintf("could not enforce labels: %v", err), http.StatusBadRequest)
 				return false

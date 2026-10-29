@@ -64,6 +64,52 @@ func TestLogsEnforcerInjectsTenantIntoPostForm(t *testing.T) {
 	requireLogMatcher(t, got, "app", labels.MatchEqual, "foo")
 }
 
+func TestLogsEnforcerPostPreservesURLQueryWhenBodyHasNoSelector(t *testing.T) {
+	// Selector in the URL, other params in the body. Body must not invent a
+	// tenant-only query that would override the URL selector.
+	var gotQuery, gotBody string
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("query")
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		gotBody = string(raw)
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := authentication.WithTenantFromHeader("X-Scope-OrgID")(
+		authorization.WithTenantLabel("tenant_id")(
+			WithEnforceAuthorizationLabels()(inner),
+		),
+	)
+
+	form := url.Values{"limit": {"10"}}
+	req := httptest.NewRequest(http.MethodPost, "/loki/api/v1/query", strings.NewReader(form.Encode()))
+	req.URL.RawQuery = url.Values{"query": {`{app="foo"}`}}.Encode()
+	req.Header.Set("X-Scope-OrgID", "team-alpha")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
+	}
+
+	ms := logQLMatchers(t, gotQuery)
+	requireLogMatcher(t, ms, "tenant_id", labels.MatchEqual, "team-alpha")
+	requireLogMatcher(t, ms, "app", labels.MatchEqual, "foo")
+
+	body, err := url.ParseQuery(gotBody)
+	if err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if body.Get("limit") != "10" {
+		t.Fatalf("body limit=%q, want 10", body.Get("limit"))
+	}
+	if body.Get("query") != "" {
+		t.Fatalf("body invented query=%q; would override URL selector", body.Get("query"))
+	}
+}
+
 func serveLogsRead(t *testing.T, tenant, method, path string, query url.Values, body string) string {
 	t.Helper()
 

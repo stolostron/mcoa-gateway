@@ -80,13 +80,8 @@ func TestEnforceValuesOnLabelValues(t *testing.T) {
 			m := smExpr.Matchers()
 			mExp := smExpected.Matchers()
 
-			sort.Slice(m, func(i, j int) bool {
-				return m[i].Name < m[j].Name
-			})
-
-			sort.Slice(mExp, func(i, j int) bool {
-				return mExp[i].Name < mExp[j].Name
-			})
+			sortMatchers(m)
+			sortMatchers(mExp)
 
 			testutil.Equals(t, matchersToStrings(mExp), matchersToStrings(m))
 		})
@@ -164,7 +159,7 @@ func TestEnforceValuesOnQuery(t *testing.T) {
 			},
 		},
 		{
-			desc: "not-equal selector cannot drop tenant regex",
+			desc: "not-equal selector kept alongside tenant regex",
 			accessMatchers: []*labels.Matcher{
 				{
 					Type:  labels.MatchRegexp,
@@ -176,7 +171,23 @@ func TestEnforceValuesOnQuery(t *testing.T) {
 				"query": []string{`{app="api", tenant_id!="a"}`},
 			},
 			expValues: url.Values{
-				"query": []string{`{app="api", tenant_id=~"a|b"}`},
+				"query": []string{`{app="api", tenant_id!="a", tenant_id=~"a|b"}`},
+			},
+		},
+		{
+			desc: "caller regex kept alongside broader tenant regex",
+			accessMatchers: []*labels.Matcher{
+				{
+					Type:  labels.MatchRegexp,
+					Name:  "tenant_id",
+					Value: "a|b",
+				},
+			},
+			urlValues: url.Values{
+				"query": []string{`{app="api", tenant_id=~"a"}`},
+			},
+			expValues: url.Values{
+				"query": []string{`{app="api", tenant_id=~"a", tenant_id=~"a|b"}`},
 			},
 		},
 		{
@@ -253,13 +264,8 @@ func TestEnforceValuesOnQuery(t *testing.T) {
 			m := smExpr.Matchers()
 			mExp := smExpected.Matchers()
 
-			sort.Slice(m, func(i, j int) bool {
-				return m[i].Name < m[j].Name
-			})
-
-			sort.Slice(mExp, func(i, j int) bool {
-				return mExp[i].Name < mExp[j].Name
-			})
+			sortMatchers(m)
+			sortMatchers(mExp)
 
 			testutil.Equals(t, matchersToStrings(mExp), matchersToStrings(m))
 
@@ -270,6 +276,18 @@ func TestEnforceValuesOnQuery(t *testing.T) {
 			}
 		})
 	}
+}
+
+func sortMatchers(m []*labels.Matcher) {
+	sort.Slice(m, func(i, j int) bool {
+		if m[i].Name != m[j].Name {
+			return m[i].Name < m[j].Name
+		}
+		if m[i].Type != m[j].Type {
+			return m[i].Type < m[j].Type
+		}
+		return m[i].Value < m[j].Value
+	})
 }
 
 func matchersToStrings(m []*labels.Matcher) []string {

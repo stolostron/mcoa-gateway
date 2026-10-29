@@ -6,7 +6,9 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -257,6 +259,71 @@ func TestMetricsReadAndWrite(t *testing.T) {
 			testutil.Equals(t, 0, len(v), "%v", v)
 		})
 
+		t.Run("query_shapes", func(t *testing.T) {
+			apiProm := v1.NewAPI(apiTest)
+			rng := v1.Range{Start: now.Time().Add(-5 * time.Minute), End: now.Time(), Step: 1 * time.Minute}
+			ownSeries := `observatorium_write{_id="test", receive_replica="0", tenant_id="` + defaultTenantName + `"}`
+			// Range aggregations drop __name__.
+			ownLabels := `{_id="test", receive_replica="0", tenant_id="` + defaultTenantName + `"}`
+
+			for _, tc := range []struct {
+				name  string
+				query string
+				want  string // substring of instant-query result; empty means expect no series
+			}{
+				{name: "bare_metric", query: "observatorium_write", want: ownSeries},
+				{name: "equality_matcher", query: `observatorium_write{_id="test"}`, want: ownSeries},
+				{name: "regex_matcher", query: `observatorium_write{_id=~"tes.*"}`, want: ownSeries},
+				{name: "not_equal_matcher", query: `observatorium_write{_id!="missing"}`, want: ownSeries},
+				{name: "negative_matcher_excludes_own", query: `observatorium_write{_id!="test"}`, want: ""},
+				{name: "or_binary", query: `observatorium_write{_id="test"} or observatorium_write{_id="missing"}`, want: ownSeries},
+				{name: "comparison", query: `observatorium_write{_id="test"} > 0`, want: ownSeries},
+				{name: "aggregation_sum", query: `sum(observatorium_write{_id="test"})`, want: "{}"},
+				{name: "aggregation_by", query: `sum by (_id) (observatorium_write)`, want: `{_id="test"}`},
+				{name: "count", query: `count(observatorium_write)`, want: "{}"},
+				{name: "avg_over_time", query: `avg_over_time(observatorium_write{_id="test"}[5m])`, want: ownLabels},
+				{name: "max_over_time", query: `max_over_time(observatorium_write{_id="test"}[5m])`, want: ownLabels},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					v, w, err := apiProm.Query(context.Background(), tc.query, now.Time())
+					testutil.Ok(t, err)
+					testutil.Equals(t, 0, len(w), "%v", w)
+					got := v.String()
+					if tc.want == "" {
+						testutil.Equals(t, "", got, "query %s: %s", tc.query, got)
+						return
+					}
+					testutil.Assert(t, strings.Contains(got, tc.want), "query %s: want %q in %q", tc.query, tc.want, got)
+					testutil.Assert(t, !strings.Contains(got, anotherTenantName), "leaked other tenant in %q", got)
+				})
+			}
+
+			t.Run("query_range_avg_over_time", func(t *testing.T) {
+				v, w, err := apiProm.QueryRange(context.Background(), `avg_over_time(observatorium_write{_id="test"}[5m])`, rng)
+				testutil.Ok(t, err)
+				testutil.Equals(t, 0, len(w), "%v", w)
+				got := v.String()
+				testutil.Assert(t, strings.Contains(got, ownLabels), "want %q in %q", ownLabels, got)
+			})
+
+			t.Run("post_form_query", func(t *testing.T) {
+				body := metricsQueryPOST(t, api.Endpoint("https"), defaultTenantName,
+					getTLSClientConfigWithClientCert(t, e, "client.pem", "client.key"),
+					`observatorium_write{_id="test"}`)
+				testutil.Assert(t, strings.Contains(body, `"status":"success"`), body)
+				testutil.Assert(t, strings.Contains(body, defaultTenantName), body)
+				testutil.Assert(t, !strings.Contains(body, anotherTenantName), body)
+			})
+
+			t.Run("series_regex_match", func(t *testing.T) {
+				v, w, err := apiProm.Series(context.Background(), []string{`{__name__=~"observatorium_.*",_id="test"}`}, now.Time().Add(-5*time.Minute), now.Time())
+				testutil.Ok(t, err)
+				testutil.Equals(t, 0, len(w), "%v", w)
+				testutil.Equals(t, 1, len(v), "%v", v)
+				testutil.Equals(t, model.LabelValue(defaultTenantName), v[0]["tenant_id"])
+			})
+		})
+
 		// Read without a client cert must fail authentication.
 		status := metricsQueryStatus(t, api.Endpoint("https"), defaultTenantName, getTLSClientConfig(t, e),
 			`observatorium_write{_id="test"}`)
@@ -294,4 +361,24 @@ func metricsQueryStatus(t *testing.T, host, tenant string, tlsCfg *tls.Config, q
 	testutil.Ok(t, err)
 	defer res.Body.Close()
 	return res.StatusCode
+}
+
+func metricsQueryPOST(t *testing.T, host, tenant string, tlsCfg *tls.Config, query string) string {
+	t.Helper()
+	client := &http.Client{Transport: &authRoundTripper{
+		rt:           &http.Transport{TLSClientConfig: tlsCfg},
+		tenantHeader: metricsTenantHeader,
+		tenant:       tenant,
+	}}
+	form := url.Values{"query": {query}}
+	req, err := http.NewRequest(http.MethodPost, "https://"+host+"/api/metrics/v1/api/v1/query", strings.NewReader(form.Encode()))
+	testutil.Ok(t, err)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	res, err := client.Do(req)
+	testutil.Ok(t, err)
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	testutil.Ok(t, err)
+	testutil.Assert(t, res.StatusCode == http.StatusOK, "status %d body %s", res.StatusCode, body)
+	return string(body)
 }

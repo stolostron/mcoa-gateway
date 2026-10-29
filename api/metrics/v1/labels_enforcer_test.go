@@ -157,6 +157,80 @@ func enforceMetrics(t *testing.T, tenant, path string, params url.Values) url.Va
 
 func TestMetricsEnforcerPostBodyKeepsSelectorsOffURL(t *testing.T) {
 	// Mimic prometheus client_golang DoGetFallback: POST form body, empty URL query.
+	gotBody, gotURLQuery := serveMetricsPost(t, "/api/metrics/v1/api/v1/series", nil, url.Values{
+		"match[]": {`{__name__="observatorium_write",_id="test"}`},
+		"start":   {"1"},
+		"end":     {"2"},
+	})
+	if gotURLQuery.Get("match[]") != "" {
+		t.Fatalf("URL still has match[]=%q; tenant-only URL matcher would OR with the body", gotURLQuery.Get("match[]"))
+	}
+	body, err := url.ParseQuery(gotBody)
+	if err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	ms := promMatchers(t, body.Get("match[]"))
+	requirePromMatcher(t, ms, "tenant_id", labels.MatchEqual, "test-oidc")
+	requirePromMatcher(t, ms, "__name__", labels.MatchEqual, "observatorium_write")
+	requirePromMatcher(t, ms, "_id", labels.MatchEqual, "test")
+}
+
+func TestMetricsEnforcerPostRestoresBodyWhenSelectorOnlyInURL(t *testing.T) {
+	gotBody, gotURLQuery := serveMetricsPost(t, "/api/metrics/v1/api/v1/query", url.Values{
+		"query": {"up"},
+	}, url.Values{
+		"time": {"123"},
+	})
+	ms := promMatchers(t, gotURLQuery.Get("query"))
+	requirePromMatcher(t, ms, "tenant_id", labels.MatchEqual, "test-oidc")
+	body, err := url.ParseQuery(gotBody)
+	if err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	if body.Get("time") != "123" {
+		t.Fatalf("body time=%q, want 123 (ParseForm must restore non-selector fields)", body.Get("time"))
+	}
+	if body.Get("query") != "" {
+		t.Fatalf("body unexpectedly has query=%q", body.Get("query"))
+	}
+}
+
+func TestMetricsEnforcerPostMergesURLAndBodyMatchParams(t *testing.T) {
+	gotBody, gotURLQuery := serveMetricsPost(t, "/api/metrics/v1/api/v1/series", url.Values{
+		"match[]": {`{__name__="up"}`},
+	}, url.Values{
+		"match[]": {`{__name__="process_cpu_seconds_total"}`},
+		"start":   {"1"},
+	})
+	if gotURLQuery.Get("match[]") != "" {
+		t.Fatalf("URL still has match[]=%q after merge into body", gotURLQuery.Get("match[]"))
+	}
+	body, err := url.ParseQuery(gotBody)
+	if err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	selectors := body["match[]"]
+	if len(selectors) != 2 {
+		t.Fatalf("got %d match[] values, want 2: %v", len(selectors), selectors)
+	}
+	seen := map[string]bool{}
+	for _, sel := range selectors {
+		ms := promMatchers(t, sel)
+		requirePromMatcher(t, ms, "tenant_id", labels.MatchEqual, "test-oidc")
+		for _, m := range ms {
+			if m.Name == "__name__" {
+				seen[m.Value] = true
+			}
+		}
+	}
+	if !seen["up"] || !seen["process_cpu_seconds_total"] {
+		t.Fatalf("merged match[] missing selectors: %v", selectors)
+	}
+}
+
+func serveMetricsPost(t *testing.T, path string, urlParams, form url.Values) (body string, urlQuery url.Values) {
+	t.Helper()
+
 	var gotBody string
 	var gotURLQuery url.Values
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -174,12 +248,10 @@ func TestMetricsEnforcerPostBodyKeepsSelectorsOffURL(t *testing.T) {
 		),
 	)
 
-	form := url.Values{
-		"match[]": {`{__name__="observatorium_write",_id="test"}`},
-		"start":   {"1"},
-		"end":     {"2"},
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+	if urlParams != nil {
+		req.URL.RawQuery = urlParams.Encode()
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/metrics/v1/api/v1/series", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("THANOS-TENANT", "test-oidc")
 	rr := httptest.NewRecorder()
@@ -187,17 +259,7 @@ func TestMetricsEnforcerPostBodyKeepsSelectorsOffURL(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
 	}
-	if gotURLQuery.Get("match[]") != "" {
-		t.Fatalf("URL still has match[]=%q; tenant-only URL matcher would OR with the body", gotURLQuery.Get("match[]"))
-	}
-	body, err := url.ParseQuery(gotBody)
-	if err != nil {
-		t.Fatalf("parse body: %v", err)
-	}
-	ms := promMatchers(t, body.Get("match[]"))
-	requirePromMatcher(t, ms, "tenant_id", labels.MatchEqual, "test-oidc")
-	requirePromMatcher(t, ms, "__name__", labels.MatchEqual, "observatorium_write")
-	requirePromMatcher(t, ms, "_id", labels.MatchEqual, "test")
+	return gotBody, gotURLQuery
 }
 
 func promMatchers(t *testing.T, selector string) []*labels.Matcher {
