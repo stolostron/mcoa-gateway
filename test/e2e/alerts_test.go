@@ -30,7 +30,7 @@ func TestAlertmanagerApiProxy(t *testing.T) {
 	t.Cleanup(e.Close)
 
 	prepareConfigsAndCerts(t, e)
-	_, token, rateLimiterAddr := startBaseServices(t, e)
+	rateLimiterAddr := startBaseServices(t, e)
 	alertmanagerEndpoint := newAlertmanagerService(e)
 	readEndpoint, writeEndpoint, _ := startServicesForMetrics(t, e)
 	testutil.Ok(t, e2e.StartAndWaitReady(alertmanagerEndpoint))
@@ -44,16 +44,7 @@ func TestAlertmanagerApiProxy(t *testing.T) {
 	testutil.Ok(t, err)
 	testutil.Ok(t, e2e.StartAndWaitReady(api))
 
-	authClient := &http.Client{
-		Transport: &authRoundTripper{
-			rt: &http.Transport{
-				TLSClientConfig: getTLSClientConfig(t, e),
-			},
-			token:        token,
-			tenantHeader: metricsTenantHeader,
-			tenant:       defaultTenantName,
-		},
-	}
+	authClient := newMTLSAuthClient(t, e, metricsTenantHeader, defaultTenantName, "client.pem", "client.key")
 
 	t.Run("alerts-check-then-write-then-read", func(t *testing.T) {
 		runtime := httptransport.New(api.Endpoint("https"), "/api/metrics/v1/am"+client2.DefaultBasePath, []string{"https"})
@@ -248,6 +239,22 @@ func TestAlertmanagerApiProxy(t *testing.T) {
 		)
 		testutil.Ok(t, err)
 		testutil.Equals(t, 1, len(tenantSilenceResult.Payload))
+	})
+
+	t.Run("alerts-requires-client-cert", func(t *testing.T) {
+		noCertClient := &http.Client{Transport: &authRoundTripper{
+			rt: &http.Transport{
+				TLSClientConfig: getTLSClientConfig(t, e),
+			},
+			tenantHeader: metricsTenantHeader,
+			tenant:       defaultTenantName,
+		}}
+		req, err := http.NewRequest(http.MethodGet, "https://"+api.Endpoint("https")+"/api/metrics/v1/am/api/v2/alerts", nil)
+		testutil.Ok(t, err)
+		res, err := noCertClient.Do(req)
+		testutil.Ok(t, err)
+		defer res.Body.Close()
+		testutil.Equals(t, http.StatusUnauthorized, res.StatusCode)
 	})
 }
 

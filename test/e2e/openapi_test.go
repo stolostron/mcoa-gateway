@@ -20,7 +20,7 @@ func TestOpenAPIEndpoint(t *testing.T) {
 	t.Cleanup(e.Close)
 
 	prepareConfigsAndCerts(t, e)
-	_, _, _ = startBaseServices(t, e)
+	_ = startBaseServices(t, e)
 	readEndpoint, writeEndpoint, _ := startServicesForMetrics(t, e)
 
 	api, err := newObservatoriumAPIService(

@@ -26,7 +26,7 @@ func TestLogs(t *testing.T) {
 	t.Cleanup(e.Close)
 
 	prepareConfigsAndCerts(t, e)
-	_, token, rateLimiterAddr := startBaseServices(t, e)
+	rateLimiterAddr := startBaseServices(t, e)
 	logsEndpoint, logsExtEndpoint := startServicesForLogs(t, e)
 
 	api, err := newObservatoriumAPIService(
@@ -44,7 +44,7 @@ func TestLogs(t *testing.T) {
 
 	t.Run("write-two-tenants-then-read", func(t *testing.T) {
 		up, err := newUpRun(
-			e, "up-logs-oidc", logs,
+			e, "up-logs-default", logs,
 			lokiRead,
 			gatewayPush,
 			withClientCert(
@@ -71,52 +71,68 @@ func TestLogs(t *testing.T) {
 		testutil.Ok(t, err)
 		testutil.Ok(t, e2e.StartAndWaitReady(up2))
 
-		testutil.Ok(t, up.WaitSumMetricsWithOptions(
-			e2emon.GreaterOrEqual(12),
-			[]string{"up_remote_writes_total"},
-			e2emon.WithLabelMatchers(
-				matchers.MustNewMatcher(matchers.MatchEqual, "result", "success"),
+		upMTLS, err := newUpRun(
+			e, "up-logs-mtls", logs,
+			lokiRead,
+			gatewayPush,
+			withClientCert(
+				filepath.Join(e.SharedDir(), certsSharedDir, "client-mtls.pem"),
+				filepath.Join(e.SharedDir(), certsSharedDir, "client-mtls.key"),
 			),
-			e2emon.WaitMissingMetrics(),
-		))
-		testutil.Ok(t, up2.WaitSumMetricsWithOptions(
-			e2emon.GreaterOrEqual(12),
-			[]string{"up_remote_writes_total"},
-			e2emon.WithLabelMatchers(
-				matchers.MustNewMatcher(matchers.MatchEqual, "result", "success"),
-			),
-			e2emon.WaitMissingMetrics(),
-		))
+			withLabels(`_id="test-mtls",tenant_id="`+mtlsTenantName+`"`),
+			withRunParameters(&runParams{initialDelay: "100ms", period: "1s", threshold: "1", latency: "10s", duration: "0"}),
+		)
+		testutil.Ok(t, err)
+		testutil.Ok(t, e2e.StartAndWaitReady(upMTLS))
+
+		for _, u := range []*e2emon.InstrumentedRunnable{up, up2, upMTLS} {
+			testutil.Ok(t, u.WaitSumMetricsWithOptions(
+				e2emon.GreaterOrEqual(12),
+				[]string{"up_remote_writes_total"},
+				e2emon.WithLabelMatchers(
+					matchers.MustNewMatcher(matchers.MatchEqual, "result", "success"),
+				),
+				e2emon.WaitMissingMetrics(),
+			))
+		}
 		testutil.Ok(t, up.Kill())
 		testutil.Ok(t, up2.Kill())
+		testutil.Ok(t, upMTLS.Kill())
 
 		// Write-path check: Loki orgs match cert OUs.
 		assertLokiQuery(t, logsExtEndpoint, defaultTenantName, `{_id="test"}`,
 			`"tenant_id":"`+defaultTenantName+`"`, "log line 1")
 		assertLokiQuery(t, logsExtEndpoint, anotherTenantName, `{_id="test-another"}`,
 			`"tenant_id":"`+anotherTenantName+`"`, "log line 1")
+		assertLokiQuery(t, logsExtEndpoint, mtlsTenantName, `{_id="test-mtls"}`,
+			`"tenant_id":"`+mtlsTenantName+`"`, "log line 1")
 		// Cross-org: default tenant's org must not see the other tenant's stream.
 		assertLokiQueryEmpty(t, logsExtEndpoint, defaultTenantName, `{_id="test-another"}`)
 
-		tr := &http.Transport{TLSClientConfig: getTLSClientConfig(t, e)}
-		oidcClient := &http.Client{Transport: &authRoundTripper{
-			rt: tr, token: token, tenantHeader: logsTenantHeader, tenant: defaultTenantName,
-		}}
-		anotherClient := &http.Client{Transport: &authRoundTripper{
-			rt: tr, token: token, tenantHeader: logsTenantHeader, tenant: anotherTenantName,
-		}}
-		attackerClient := &http.Client{Transport: &authRoundTripper{
-			rt: tr, token: token, tenantHeader: logsTenantHeader, tenant: "test-attacker",
-		}}
+		defaultClient := newMTLSAuthClient(t, e, logsTenantHeader, defaultTenantName, "client.pem", "client.key")
+		anotherClient := newMTLSAuthClient(t, e, logsTenantHeader, anotherTenantName, "client-another-tenant.pem", "client-another-tenant.key")
+		mtlsClient := newMTLSAuthClient(t, e, logsTenantHeader, mtlsTenantName, "client-mtls.pem", "client-mtls.key")
+		attackerClient := newMTLSAuthClient(t, e, logsTenantHeader, "test-attacker", "client-attacker.pem", "client-attacker.key")
 
-		// Read-path through the gateway: LogQL enforcer + Loki org scoping.
-		assertGatewayLogsQuery(t, oidcClient, gatewayQuery, `{_id="test"}`,
+		// Read-path through the gateway: mTLS auth + LogQL enforcer + Loki org scoping.
+		assertGatewayLogsQuery(t, defaultClient, gatewayQuery, `{_id="test"}`,
 			`"tenant_id":"`+defaultTenantName+`"`, "log line 1")
 		assertGatewayLogsQuery(t, anotherClient, gatewayQuery, `{_id="test-another"}`,
 			`"tenant_id":"`+anotherTenantName+`"`, "log line 1")
-		assertGatewayLogsQueryEmpty(t, oidcClient, gatewayQuery, `{_id="test-another"}`)
+		assertGatewayLogsQuery(t, mtlsClient, gatewayQuery, `{_id="test-mtls"}`,
+			`"tenant_id":"`+mtlsTenantName+`"`, "log line 1")
+		assertGatewayLogsQueryEmpty(t, defaultClient, gatewayQuery, `{_id="test-another"}`)
 		assertGatewayLogsQueryEmpty(t, anotherClient, gatewayQuery, `{_id="test"}`)
+		assertGatewayLogsQueryEmpty(t, mtlsClient, gatewayQuery, `{_id="test"}`)
 		assertGatewayLogsQueryEmpty(t, attackerClient, gatewayQuery, `{_id="test"}`)
+
+		noCertClient := &http.Client{Transport: &authRoundTripper{
+			rt:           &http.Transport{TLSClientConfig: getTLSClientConfig(t, e)},
+			tenantHeader: logsTenantHeader,
+			tenant:       defaultTenantName,
+		}}
+		status := logsQueryStatus(t, noCertClient, gatewayQuery, `{_id="test"}`)
+		testutil.Equals(t, http.StatusUnauthorized, status)
 	})
 
 	t.Run("tail-write", func(t *testing.T) {
@@ -124,6 +140,10 @@ func TestLogs(t *testing.T) {
 			e, "up-logs-tail", logs,
 			lokiRead,
 			gatewayPush,
+			withClientCert(
+				filepath.Join(e.SharedDir(), certsSharedDir, "client.pem"),
+				filepath.Join(e.SharedDir(), certsSharedDir, "client.key"),
+			),
 			withLabels(`_id="test",tenant_id="`+defaultTenantName+`"`),
 			withRunParameters(&runParams{initialDelay: "0s", period: "250ms", threshold: "1", latency: "10s", duration: "0"}),
 		)
@@ -140,11 +160,10 @@ func TestLogs(t *testing.T) {
 		))
 		testutil.Ok(t, up.Stop())
 
-		d := websocket.Dialer{TLSClientConfig: getTLSClientConfig(t, e)}
+		d := websocket.Dialer{TLSClientConfig: getTLSClientConfigWithClientCert(t, e, "client.pem", "client.key")}
 		conn, resp, err := d.Dial(
 			"wss://"+api.Endpoint("https")+"/api/logs/v1/loki/api/v1/tail?query=%7B_id%3D%22test%22%7D",
 			http.Header{
-				"Authorization":  []string{"Bearer " + token},
 				logsTenantHeader: []string{defaultTenantName},
 			},
 		)
@@ -208,4 +227,17 @@ func doLokiQuery(t *testing.T, client *http.Client, endpoint, org, query string)
 	body, err := io.ReadAll(res.Body)
 	testutil.Ok(t, err)
 	return string(body)
+}
+
+func logsQueryStatus(t *testing.T, client *http.Client, endpoint, query string) int {
+	t.Helper()
+	r, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	testutil.Ok(t, err)
+	v := url.Values{}
+	v.Add("query", query)
+	r.URL.RawQuery = v.Encode()
+	res, err := client.Do(r)
+	testutil.Ok(t, err)
+	defer res.Body.Close()
+	return res.StatusCode
 }

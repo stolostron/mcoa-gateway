@@ -33,7 +33,6 @@ const (
 	otelCollectorImage  = "ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.142.0"
 	tempoImage          = "grafana/tempo:2.9.0"
 
-	dexImage              = "dexidp/dex:v2.30.0"
 	opaImage              = "openpolicyagent/opa:1.5.1-static"
 	gubernatorImage       = "ghcr.io/mailgun/gubernator:v2.0.0-rc.36"
 	rulesObjectStoreImage = "quay.io/observatorium/rules-objstore:main-2023-01-05-26de237"
@@ -185,46 +184,15 @@ func startServicesForProbes(t *testing.T, e e2e.Environment) (probesEndpoint str
 }
 
 // startBaseServices starts and waits until all base services required for the test are ready.
-func startBaseServices(t *testing.T, e e2e.Environment) (
-	dex *e2emon.InstrumentedRunnable,
-	token string,
-	rateLimiterAddr string,
-) {
-	createDexYAML(t, e, getContainerName(e, "dex"), getContainerName(e, "mcoa-gateway"))
-
-	dex = newDexService(e)
+// Tenants use mTLS only (no Dex/OIDC).
+func startBaseServices(t *testing.T, e e2e.Environment) (rateLimiterAddr string) {
 	gubernator := newGubernatorService(e)
 	opa := newOPAService(e)
-	testutil.Ok(t, e2e.StartAndWaitReady(dex, gubernator, opa))
+	testutil.Ok(t, e2e.StartAndWaitReady(gubernator, opa))
 
-	createTenantsYAML(t, e, dex.InternalEndpoint("https"), opa.InternalEndpoint("http"), getContainerName(e, "mcoa-gateway"))
+	createTenantsYAML(t, e)
 
-	token, err := obtainToken(dex.Endpoint("https"), getContainerName(e, "dex"), getTLSClientConfig(t, e))
-	testutil.Ok(t, err)
-
-	return dex, token, gubernator.InternalEndpoint("grpc")
-}
-
-func newDexService(e e2e.Environment) *e2emon.InstrumentedRunnable {
-	ports := map[string]int{
-		"https":          5556,
-		"http-telemetry": 5558,
-	}
-
-	return e2emon.AsInstrumented(e.Runnable("dex").WithPorts(ports).Init(
-		e2e.StartOptions{
-			Image:   dexImage,
-			Command: e2e.NewCommand("dex", "serve", filepath.Join(e.SharedDir(), configSharedDir, "dex.yaml")),
-			Readiness: e2e.NewCmdReadinessProbe(e2e.NewCommand(
-				"wget",
-				"--no-check-certificate",
-				"--quiet",
-				"-O", "/dev/null",
-				"https://127.0.0.1:5556/dex/.well-known/openid-configuration",
-			)),
-			User: strconv.Itoa(os.Getuid()),
-		},
-	), "http-telemetry")
+	return gubernator.InternalEndpoint("grpc")
 }
 
 func newGubernatorService(e e2e.Environment) *e2emon.InstrumentedRunnable {

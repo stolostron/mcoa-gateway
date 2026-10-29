@@ -36,12 +36,13 @@ func GenerateCerts(
 	path string,
 	apiCommonName string,
 	apiSANs []string,
-	dexCommonName string,
-	dexSANs []string,
 ) error {
-	return GenerateCertsWithClients(path, apiCommonName, apiSANs, dexCommonName, dexSANs,
+	return GenerateCertsWithClients(path, apiCommonName, apiSANs,
 		ClientCert{FilePrefix: "client", CommonName: "up", OU: "test-oidc"},
 		ClientCert{FilePrefix: "client-another-tenant", CommonName: "up-another", OU: "another-tenant"},
+		ClientCert{FilePrefix: "client-mtls", CommonName: "mtls-reader", OU: "test-mtls"},
+		ClientCert{FilePrefix: "client-attacker", CommonName: "attacker", OU: "test-attacker"},
+		ClientCert{FilePrefix: "client-probes", CommonName: "probes", OU: "test-probes"},
 	)
 }
 
@@ -49,8 +50,6 @@ func GenerateCertsWithClients(
 	path string,
 	apiCommonName string,
 	apiSANs []string,
-	dexCommonName string,
-	dexSANs []string,
 	clients ...ClientCert,
 ) error {
 	caCommonName := "observatorium"
@@ -116,18 +115,12 @@ func GenerateCertsWithClients(
 	if err != nil {
 		return err
 	}
-	dexBundle, err := generateCert(caParsed, caPrivKey, false, dexCommonName, dexSANs, nil)
-	if err != nil {
-		return err
-	}
 
 	files := map[string][]byte{
 		"ca.key":     caBundle.key,
 		"ca.pem":     caBundle.cert,
 		"server.key": apiBundle.key,
 		"server.pem": apiBundle.cert,
-		"dex.key":    dexBundle.key,
-		"dex.pem":    dexBundle.cert,
 	}
 
 	for _, c := range clients {

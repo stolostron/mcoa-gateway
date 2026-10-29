@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -30,7 +31,7 @@ func TestMetricsReadAndWrite(t *testing.T) {
 	t.Cleanup(e.Close)
 
 	prepareConfigsAndCerts(t, e)
-	_, token, rateLimiterAddr := startBaseServices(t, e)
+	rateLimiterAddr := startBaseServices(t, e)
 	readEndpoint, writeEndpoint, readExtEndpoint := startServicesForMetrics(t, e)
 
 	api, err := newObservatoriumAPIService(
@@ -73,30 +74,39 @@ func TestMetricsReadAndWrite(t *testing.T) {
 		testutil.Ok(t, err)
 		testutil.Ok(t, e2e.StartAndWaitReady(up2))
 
+		upMTLS, err := newUpRun(
+			e, "up-metrics-mtls", metrics,
+			thanosRead,
+			gatewayWrite,
+			withClientCert(
+				filepath.Join(e.SharedDir(), certsSharedDir, "client-mtls.pem"),
+				filepath.Join(e.SharedDir(), certsSharedDir, "client-mtls.key"),
+			),
+			withLabels(`_id="test-mtls"`),
+			withRunParameters(&runParams{period: "500ms", threshold: "1", latency: "10s", duration: "0"}),
+		)
+		testutil.Ok(t, err)
+		testutil.Ok(t, e2e.StartAndWaitReady(upMTLS))
+
 		minimumExpectedWrites := float64(21)
 
-		testutil.Ok(t, up.WaitSumMetricsWithOptions(
-			e2emon.GreaterOrEqual(minimumExpectedWrites),
-			[]string{"up_remote_writes_total"},
-			e2emon.WithLabelMatchers(
-				matchers.MustNewMatcher(matchers.MatchEqual, "result", "success"),
-			),
-			e2emon.WaitMissingMetrics(),
-		))
-		testutil.Ok(t, up2.WaitSumMetricsWithOptions(
-			e2emon.GreaterOrEqual(minimumExpectedWrites),
-			[]string{"up_remote_writes_total"},
-			e2emon.WithLabelMatchers(
-				matchers.MustNewMatcher(matchers.MatchEqual, "result", "success"),
-			),
-			e2emon.WaitMissingMetrics(),
-		))
+		for _, u := range []*e2emon.InstrumentedRunnable{up, up2, upMTLS} {
+			testutil.Ok(t, u.WaitSumMetricsWithOptions(
+				e2emon.GreaterOrEqual(minimumExpectedWrites),
+				[]string{"up_remote_writes_total"},
+				e2emon.WithLabelMatchers(
+					matchers.MustNewMatcher(matchers.MatchEqual, "result", "success"),
+				),
+				e2emon.WaitMissingMetrics(),
+			))
+		}
 
 		testutil.Ok(t, up.Kill())
 		testutil.Ok(t, up2.Kill())
+		testutil.Ok(t, upMTLS.Kill())
 
 		testutil.Ok(t, api.WaitSumMetricsWithOptions(
-			e2emon.GreaterOrEqual(minimumExpectedWrites*2),
+			e2emon.GreaterOrEqual(minimumExpectedWrites*3),
 			[]string{"http_requests_total"},
 		))
 
@@ -117,6 +127,9 @@ func TestMetricsReadAndWrite(t *testing.T) {
 			testutil.Assert(t, regexp.MustCompile(
 				fmt.Sprintf(`observatorium_write\{_id="test-another", receive_replica="0", tenant_id="%s"\}`, anotherTenantName),
 			).MatchString(got), "missing series for %s: %s", anotherTenantName, got)
+			testutil.Assert(t, regexp.MustCompile(
+				fmt.Sprintf(`observatorium_write\{_id="test-mtls", receive_replica="0", tenant_id="%s"\}`, mtlsTenantName),
+			).MatchString(got), "missing series for %s: %s", mtlsTenantName, got)
 		}
 
 		{
@@ -149,41 +162,15 @@ func TestMetricsReadAndWrite(t *testing.T) {
 		testutil.Equals(t, http.StatusUnauthorized, res.StatusCode)
 	})
 
-	// Query through the gateway to ensure tenant isolation via THANOS-TENANT.
+	// Query through the gateway with mTLS + THANOS-TENANT; label enforcer scopes data.
 	t.Run("metrics-tenant-isolation", func(t *testing.T) {
-		tr := &http.Transport{
-			TLSClientConfig: getTLSClientConfig(t, e),
-		}
-
-		apiTest, err := promapi.NewClient(promapi.Config{
-			Address: "https://" + api.Endpoint("https") + "/api/metrics/v1",
-			RoundTripper: &authRoundTripper{
-				rt:           tr,
-				token:        token,
-				tenantHeader: metricsTenantHeader,
-				tenant:       defaultTenantName,
-			},
-		})
+		apiTest, err := newMetricsPromClient(t, e, api.Endpoint("https"), defaultTenantName, "client.pem", "client.key")
 		testutil.Ok(t, err)
-		apiAttacker, err := promapi.NewClient(promapi.Config{
-			Address: "https://" + api.Endpoint("https") + "/api/metrics/v1",
-			RoundTripper: &authRoundTripper{
-				rt:           tr,
-				token:        token,
-				tenantHeader: metricsTenantHeader,
-				tenant:       "test-attacker",
-			},
-		})
+		apiAnother, err := newMetricsPromClient(t, e, api.Endpoint("https"), anotherTenantName, "client-another-tenant.pem", "client-another-tenant.key")
 		testutil.Ok(t, err)
-		apiAnother, err := promapi.NewClient(promapi.Config{
-			Address: "https://" + api.Endpoint("https") + "/api/metrics/v1",
-			RoundTripper: &authRoundTripper{
-				rt:           tr,
-				token:        token,
-				tenantHeader: metricsTenantHeader,
-				tenant:       anotherTenantName,
-			},
-		})
+		apiMTLS, err := newMetricsPromClient(t, e, api.Endpoint("https"), mtlsTenantName, "client-mtls.pem", "client-mtls.key")
+		testutil.Ok(t, err)
+		apiAttacker, err := newMetricsPromClient(t, e, api.Endpoint("https"), "test-attacker", "client-attacker.pem", "client-attacker.key")
 		testutil.Ok(t, err)
 
 		now := model.Now()
@@ -201,8 +188,19 @@ func TestMetricsReadAndWrite(t *testing.T) {
 			vs = strings.Split(v.String(), " => ")
 			testutil.Equals(t, "observatorium_write{_id=\"test-another\", receive_replica=\"0\", tenant_id=\""+anotherTenantName+"\"}", vs[0])
 
+			v, w, err = v1.NewAPI(apiMTLS).Query(context.Background(), `observatorium_write{_id="test-mtls"}`, now.Time())
+			testutil.Ok(t, err)
+			testutil.Equals(t, 0, len(w), "%v", w)
+			vs = strings.Split(v.String(), " => ")
+			testutil.Equals(t, "observatorium_write{_id=\"test-mtls\", receive_replica=\"0\", tenant_id=\""+mtlsTenantName+"\"}", vs[0])
+
 			// Cross-tenant: each tenant must not see the other's series.
 			v, w, err = v1.NewAPI(apiTest).Query(context.Background(), "observatorium_write{_id=\"test-another\"}", now.Time())
+			testutil.Ok(t, err)
+			testutil.Equals(t, v1.Warnings(nil), w)
+			testutil.Equals(t, "", v.String())
+
+			v, w, err = v1.NewAPI(apiMTLS).Query(context.Background(), `observatorium_write{_id="test"}`, now.Time())
 			testutil.Ok(t, err)
 			testutil.Equals(t, v1.Warnings(nil), w)
 			testutil.Equals(t, "", v.String())
@@ -258,5 +256,42 @@ func TestMetricsReadAndWrite(t *testing.T) {
 			testutil.Equals(t, 0, len(w), "%v", w)
 			testutil.Equals(t, 0, len(v), "%v", v)
 		})
+
+		// Read without a client cert must fail authentication.
+		status := metricsQueryStatus(t, api.Endpoint("https"), defaultTenantName, getTLSClientConfig(t, e),
+			`observatorium_write{_id="test"}`)
+		testutil.Equals(t, http.StatusUnauthorized, status)
 	})
+}
+
+func newMetricsPromClient(t *testing.T, e e2e.Environment, host, tenant, certFile, keyFile string) (promapi.Client, error) {
+	t.Helper()
+	return promapi.NewClient(promapi.Config{
+		Address: "https://" + host + "/api/metrics/v1",
+		RoundTripper: &authRoundTripper{
+			rt: &http.Transport{
+				TLSClientConfig: getTLSClientConfigWithClientCert(t, e, certFile, keyFile),
+			},
+			tenantHeader: metricsTenantHeader,
+			tenant:       tenant,
+		},
+	})
+}
+
+func metricsQueryStatus(t *testing.T, host, tenant string, tlsCfg *tls.Config, query string) int {
+	t.Helper()
+	client := &http.Client{Transport: &authRoundTripper{
+		rt:           &http.Transport{TLSClientConfig: tlsCfg},
+		tenantHeader: metricsTenantHeader,
+		tenant:       tenant,
+	}}
+	req, err := http.NewRequest(http.MethodGet, "https://"+host+"/api/metrics/v1/api/v1/query", nil)
+	testutil.Ok(t, err)
+	q := req.URL.Query()
+	q.Set("query", query)
+	req.URL.RawQuery = q.Encode()
+	res, err := client.Do(req)
+	testutil.Ok(t, err)
+	defer res.Body.Close()
+	return res.StatusCode
 }

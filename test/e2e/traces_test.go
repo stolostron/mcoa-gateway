@@ -153,7 +153,7 @@ func TestTracesExport(t *testing.T) {
 	t.Cleanup(e.Close)
 
 	prepareConfigsAndCerts(t, e)
-	_, token, _ := startBaseServices(t, e)
+	_ = startBaseServices(t, e)
 	internalOTLPGRPCEndpoint, internalOTLPHTTPEndpoint, httpExternalQueryEndpoint, httpInternalQueryEndpoint := startServicesForTraces(t, e)
 
 	api, err := newObservatoriumAPIService(
@@ -172,8 +172,7 @@ func TestTracesExport(t *testing.T) {
 
 	t.Run("write-grpc-then-query-single-trace", func(t *testing.T) {
 		createOtelForwardingCollectorConfigYAML(t, e,
-			api.InternalEndpoint("grpc"),
-			token)
+			api.InternalEndpoint("grpc"))
 
 		otel := e.Runnable("otel-fwd-collector").
 			WithPorts(
@@ -408,7 +407,7 @@ func TestTracesTemplateQuery(t *testing.T) {
 	t.Cleanup(e.Close)
 
 	prepareConfigsAndCerts(t, e)
-	_, token, _ := startBaseServices(t, e)
+	_ = startBaseServices(t, e)
 	internalOTLPGRPCEndpoint, _, httpExternalQueryEndpoint, httpInternalQueryEndpoint := startServicesForTraces(t, e)
 
 	api, err := newObservatoriumAPIService(
@@ -427,8 +426,7 @@ func TestTracesTemplateQuery(t *testing.T) {
 
 	t.Run("write-then-template-query-single-trace", func(t *testing.T) {
 		createOtelForwardingCollectorConfigYAML(t, e,
-			api.InternalEndpoint("grpc"),
-			token)
+			api.InternalEndpoint("grpc"))
 
 		otel := e.Runnable("otel-fwd-collector").
 			WithPorts(
@@ -528,7 +526,7 @@ func TestTracesTempo(t *testing.T) {
 	t.Cleanup(e.Close)
 
 	prepareConfigsAndCerts(t, e)
-	_, token, _ := startBaseServices(t, e)
+	_ = startBaseServices(t, e)
 
 	tempoDistributorEndpoint, internalTempoQueryEndpoint, _ := startTempoServicesForTraces(t, e)
 
@@ -548,8 +546,7 @@ func TestTracesTempo(t *testing.T) {
 	t.Run("write-then-query-single-trace", func(t *testing.T) {
 
 		createOtelForwardingCollectorConfigYAML(t, e,
-			api.InternalEndpoint("grpc"),
-			token)
+			api.InternalEndpoint("grpc"))
 
 		otel := e.Runnable("otel-fwd-collector").
 			WithPorts(

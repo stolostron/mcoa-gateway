@@ -117,7 +117,7 @@ func TestRulesAPI(t *testing.T) {
 	t.Cleanup(e.Close)
 
 	prepareConfigsAndCerts(t, e)
-	_, token, rateLimiterAddr := startBaseServices(t, e)
+	rateLimiterAddr := startBaseServices(t, e)
 	metricsRulesEndpoint := startServicesForRules(t, e)
 	logsRulesEndpoint, _ := startServicesForLogs(t, e)
 
@@ -135,27 +135,9 @@ func TestRulesAPI(t *testing.T) {
 	logsRulesURL := "https://" + api.Endpoint("https") + "/api/logs/v1/loki/api/v1/rules"
 	metricsRulesURL := "https://" + api.Endpoint("https") + "/api/metrics/v1/api/v1/rules/raw"
 
-	// Client presents mTLS cert (OU=test-oidc) for writes and sends bearer + tenant
-	// header for reads.
-	tr := &http.Transport{
-		TLSClientConfig: getTLSClientConfigWithClientCert(t, e, "client.pem", "client.key"),
-	}
-	client := &http.Client{
-		Transport: &authRoundTripper{
-			rt:           tr,
-			token:        token,
-			tenantHeader: metricsTenantHeader,
-			tenant:       defaultTenantName,
-		},
-	}
-	logsClient := &http.Client{
-		Transport: &authRoundTripper{
-			rt:           tr,
-			token:        token,
-			tenantHeader: logsTenantHeader,
-			tenant:       defaultTenantName,
-		},
-	}
+	// Client presents mTLS cert (OU=test-oidc); tenant header scopes reads.
+	client := newMTLSAuthClient(t, e, metricsTenantHeader, defaultTenantName, "client.pem", "client.key")
+	logsClient := newMTLSAuthClient(t, e, logsTenantHeader, defaultTenantName, "client.pem", "client.key")
 
 	t.Run("metrics-write-then-read-recording-rules", func(t *testing.T) {
 		r, err := http.NewRequest(

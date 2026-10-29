@@ -22,7 +22,7 @@ func TestProbes_CreateAndGetProbe(t *testing.T) {
 	t.Cleanup(e.Close)
 
 	prepareConfigsAndCerts(t, e)
-	_, token, rateLimiterAddr := startBaseServices(t, e)
+	rateLimiterAddr := startBaseServices(t, e)
 	probesEndpoint := startServicesForProbes(t, e)
 
 	api, err := newObservatoriumAPIService(
@@ -51,14 +51,9 @@ func TestProbes_CreateAndGetProbe(t *testing.T) {
 		createURL := fmt.Sprintf("https://%s/api/metrics/v1/%s/probes", api.Endpoint("https"), defaultTenantName)
 		req, err := http.NewRequest("POST", createURL, bytes.NewBuffer(payloadBytes))
 		testutil.Ok(t, err)
-		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 
-		client := &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: getTLSClientConfig(t, e),
-			},
-		}
+		client := newMTLSAuthClient(t, e, metricsTenantHeader, defaultTenantName, "client.pem", "client.key")
 
 		resp, err := client.Do(req)
 		testutil.Ok(t, err)
@@ -81,7 +76,6 @@ func TestProbes_CreateAndGetProbe(t *testing.T) {
 		getURL := fmt.Sprintf("https://%s/api/metrics/v1/%s/probes/%s", api.Endpoint("https"), defaultTenantName, probeID)
 		getReq, err := http.NewRequest("GET", getURL, nil)
 		testutil.Ok(t, err)
-		getReq.Header.Set("Authorization", "Bearer "+token)
 
 		getResp, err := client.Do(getReq)
 		testutil.Ok(t, err)
@@ -119,7 +113,7 @@ func TestProbes_ListProbes(t *testing.T) {
 	t.Cleanup(e.Close)
 
 	prepareConfigsAndCerts(t, e)
-	_, token, rateLimiterAddr := startBaseServices(t, e)
+	rateLimiterAddr := startBaseServices(t, e)
 	probesEndpoint := startServicesForProbes(t, e)
 
 	api, err := newObservatoriumAPIService(
@@ -132,11 +126,7 @@ func TestProbes_ListProbes(t *testing.T) {
 	testutil.Ok(t, e2e.StartAndWaitReady(api))
 
 	t.Run("list-probes", func(t *testing.T) {
-		client := &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: getTLSClientConfig(t, e),
-			},
-		}
+		client := newMTLSAuthClient(t, e, metricsTenantHeader, defaultTenantName, "client.pem", "client.key")
 
 		// Create a couple of test probes
 		for i, env := range []string{"prod", "test"} {
@@ -154,7 +144,6 @@ func TestProbes_ListProbes(t *testing.T) {
 			createURL := fmt.Sprintf("https://%s/api/metrics/v1/%s/probes", api.Endpoint("https"), defaultTenantName)
 			req, err := http.NewRequest("POST", createURL, bytes.NewBuffer(payloadBytes))
 			testutil.Ok(t, err)
-			req.Header.Set("Authorization", "Bearer "+token)
 			req.Header.Set("Content-Type", "application/json")
 
 			resp, err := client.Do(req)
@@ -167,7 +156,6 @@ func TestProbes_ListProbes(t *testing.T) {
 		listURL := fmt.Sprintf("https://%s/api/metrics/v1/%s/probes", api.Endpoint("https"), defaultTenantName)
 		listReq, err := http.NewRequest("GET", listURL, nil)
 		testutil.Ok(t, err)
-		listReq.Header.Set("Authorization", "Bearer "+token)
 
 		listResp, err := client.Do(listReq)
 		testutil.Ok(t, err)
@@ -191,7 +179,6 @@ func TestProbes_ListProbes(t *testing.T) {
 		filterURL := fmt.Sprintf("https://%s/api/metrics/v1/%s/probes?label_selector=env=prod", api.Endpoint("https"), defaultTenantName)
 		filterReq, err := http.NewRequest("GET", filterURL, nil)
 		testutil.Ok(t, err)
-		filterReq.Header.Set("Authorization", "Bearer "+token)
 
 		filterResp, err := client.Do(filterReq)
 		testutil.Ok(t, err)
@@ -225,7 +212,7 @@ func TestProbes_CreateProbeConflict(t *testing.T) {
 	t.Cleanup(e.Close)
 
 	prepareConfigsAndCerts(t, e)
-	_, token, rateLimiterAddr := startBaseServices(t, e)
+	rateLimiterAddr := startBaseServices(t, e)
 	probesEndpoint := startServicesForProbes(t, e)
 
 	api, err := newObservatoriumAPIService(
@@ -238,11 +225,7 @@ func TestProbes_CreateProbeConflict(t *testing.T) {
 	testutil.Ok(t, e2e.StartAndWaitReady(api))
 
 	t.Run("create-probe-conflict", func(t *testing.T) {
-		client := &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: getTLSClientConfig(t, e),
-			},
-		}
+		client := newMTLSAuthClient(t, e, metricsTenantHeader, defaultTenantName, "client.pem", "client.key")
 
 		probePayload := map[string]interface{}{
 			"static_url": "http://example.com/duplicate",
@@ -260,7 +243,6 @@ func TestProbes_CreateProbeConflict(t *testing.T) {
 		// Create first probe
 		req1, err := http.NewRequest("POST", createURL, bytes.NewBuffer(payloadBytes))
 		testutil.Ok(t, err)
-		req1.Header.Set("Authorization", "Bearer "+token)
 		req1.Header.Set("Content-Type", "application/json")
 
 		resp1, err := client.Do(req1)
@@ -271,7 +253,6 @@ func TestProbes_CreateProbeConflict(t *testing.T) {
 		// Attempt to create second probe with same URL
 		req2, err := http.NewRequest("POST", createURL, bytes.NewBuffer(payloadBytes))
 		testutil.Ok(t, err)
-		req2.Header.Set("Authorization", "Bearer "+token)
 		req2.Header.Set("Content-Type", "application/json")
 
 		resp2, err := client.Do(req2)
@@ -289,7 +270,7 @@ func TestProbes_UnauthorizedAccess(t *testing.T) {
 	t.Cleanup(e.Close)
 
 	prepareConfigsAndCerts(t, e)
-	_, _, rateLimiterAddr := startBaseServices(t, e)
+	rateLimiterAddr := startBaseServices(t, e)
 	probesEndpoint := startServicesForProbes(t, e)
 
 	api, err := newObservatoriumAPIService(
@@ -321,21 +302,7 @@ func TestProbes_UnauthorizedAccess(t *testing.T) {
 		testutil.Ok(t, err)
 		defer resp.Body.Close()
 
-		// Should get unauthorized response (401) or redirect to login (302)
-		testutil.Assert(t, resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusFound,
-			fmt.Sprintf("expected 401 or 302, got %d", resp.StatusCode))
-
-		// Test with invalid token (properly formatted JWT but invalid signature)
-		reqInvalid, err := http.NewRequest("GET", listURL, nil)
-		testutil.Ok(t, err)
-		reqInvalid.Header.Set("Authorization", "Bearer invalid-token")
-
-		respInvalid, err := client.Do(reqInvalid)
-		testutil.Ok(t, err)
-		defer respInvalid.Body.Close()
-
-		// Should get unauthorized, forbidden, or server error response
-		testutil.Assert(t, respInvalid.StatusCode == http.StatusUnauthorized || respInvalid.StatusCode == http.StatusForbidden || respInvalid.StatusCode == http.StatusInternalServerError,
-			fmt.Sprintf("expected 401, 403, or 500, got %d", respInvalid.StatusCode))
+		// mTLS required: no client cert → unauthorized.
+		testutil.Equals(t, http.StatusUnauthorized, resp.StatusCode)
 	})
 }
