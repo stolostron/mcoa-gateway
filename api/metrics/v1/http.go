@@ -158,7 +158,32 @@ func WithAlertmanagerSilenceIDWriteMiddleware(m ...func(http.Handler) http.Handl
 	}
 }
 
-// WithGlobalMiddleware adds a middleware for all operations, execpt the receive and rules-raw write paths.
+// WithQueryReadUIMiddleware appends middleware to query, read, and UI routes.
+// UI includes rules GET. It does not append to Alertmanager, remote-write, or rules-raw PUT.
+func WithQueryReadUIMiddleware(m ...func(http.Handler) http.Handler) HandlerOption {
+	return func(h *handlerConfiguration) {
+		h.queryMiddlewares = append(h.queryMiddlewares, m...)
+		h.readMiddlewares = append(h.readMiddlewares, m...)
+		h.uiMiddlewares = append(h.uiMiddlewares, m...)
+	}
+}
+
+// WithAlertmanagerMiddleware appends middleware to alerts read, silence read,
+// silence write, silence-id read, and silence-id write.
+// It does not append to query, read, or UI.
+func WithAlertmanagerMiddleware(m ...func(http.Handler) http.Handler) HandlerOption {
+	return func(h *handlerConfiguration) {
+		h.alertmanagerMiddleware.alertsReadMiddlewares = append(h.alertmanagerMiddleware.alertsReadMiddlewares, m...)
+		h.alertmanagerMiddleware.silenceReadMiddlewares = append(h.alertmanagerMiddleware.silenceReadMiddlewares, m...)
+		h.alertmanagerMiddleware.silenceWriteMiddlewares = append(h.alertmanagerMiddleware.silenceWriteMiddlewares, m...)
+		h.alertmanagerMiddleware.silenceIDReadMiddlewares = append(h.alertmanagerMiddleware.silenceIDReadMiddlewares, m...)
+		h.alertmanagerMiddleware.silenceIDWriteMiddlewares = append(h.alertmanagerMiddleware.silenceIDWriteMiddlewares, m...)
+	}
+}
+
+// WithGlobalMiddleware adds middleware to query, read, UI, and every Alertmanager route.
+// It does not add middleware to remote-write or rules-raw PUT.
+// A derive chain uses WithQueryReadUIMiddleware instead, so Alertmanager stays on intersect.
 func WithGlobalMiddleware(m ...func(http.Handler) http.Handler) HandlerOption {
 	return func(h *handlerConfiguration) {
 		h.uiMiddlewares = append(h.uiMiddlewares, m...)
