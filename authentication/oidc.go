@@ -305,15 +305,8 @@ func (a oidcAuthenticator) Middleware() Middleware {
 			} else {
 				cookie, err := r.Cookie(a.cookieName)
 				if err != nil {
-					tenant, ok := GetTenant(r.Context())
-					if !ok {
-						const msg = "error finding tenant"
-						level.Warn(a.logger).Log("msg", msg)
-						httperr.PrometheusAPIError(w, msg, http.StatusInternalServerError)
-						return
-					}
-					// Redirect users to the OIDC login
-					w.Header().Set("Location", path.Join("/oidc", tenant, "/login"))
+					// The login route is the authenticator's own tenant. Derive mode has no client tenant.
+					w.Header().Set("Location", providerLoginPath("oidc", a.tenant))
 					httperr.PrometheusAPIError(w, "failed to find token", http.StatusFound)
 					return
 				}

@@ -477,6 +477,7 @@ func newObservatoriumAPIService(
 		"--tls.client-auth-type": "VerifyClientCertIfGiven",
 		"--tenants.config":       filepath.Join(e.SharedDir(), configSharedDir, "tenants.yaml"),
 		"--log.level":            logLevelDebug,
+		"--userperms.disable":    "true",
 	})
 
 	if opts.metricsReadEndpoint != "" && opts.metricsWriteEndpoint != "" {

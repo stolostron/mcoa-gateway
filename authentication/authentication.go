@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
@@ -146,14 +147,28 @@ func (pm *ProviderManager) GRPCMiddlewares(tenant string) (grpc.StreamServerInte
 	return nil, false
 }
 
-// PatternHandler return an http.HandlerFunc for a corresponding pattern.
+// tenantParam is the chi parameter on /openshift/{tenant} and /oidc/{tenant}.
+const tenantParam = "tenant"
+
+// AddMiddleware registers mw for tenant.
+// InitializeProvider is the production registrar. Tests use AddMiddleware
+// for a provider that does not dial a hub.
+func (pm *ProviderManager) AddMiddleware(tenant string, mw Middleware) {
+	pm.mtx.Lock()
+	defer pm.mtx.Unlock()
+	pm.middlewares[tenant] = mw
+}
+
+// PatternHandler dispatches a login or callback to the provider registered
+// for the URL tenant. Chi Mount keeps {tenant} and clears the trailing "*"
+// param before this handler runs.
 func (pm *ProviderManager) PatternHandler(pattern string) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tenant, ok := GetTenant(r.Context())
+		tenant := chi.URLParam(r, tenantParam)
 		const msg = "error finding tenant"
-		if !ok {
-			level.Warn(pm.logger).Log("msg", msg, "tenant", tenant)
-			httperr.PrometheusAPIError(w, msg, http.StatusInternalServerError)
+		if tenant == "" {
+			level.Warn(pm.logger).Log("msg", msg)
+			httperr.PrometheusAPIError(w, msg, http.StatusBadRequest)
 			return
 		}
 

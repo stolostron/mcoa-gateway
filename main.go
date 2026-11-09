@@ -53,6 +53,7 @@ import (
 	tracesv1 "github.com/stolostron/mcoa-gateway/api/traces/v1"
 	"github.com/stolostron/mcoa-gateway/authentication"
 	"github.com/stolostron/mcoa-gateway/authorization"
+	"github.com/stolostron/mcoa-gateway/authorization/userperms"
 	"github.com/stolostron/mcoa-gateway/client"
 	"github.com/stolostron/mcoa-gateway/logger"
 	"github.com/stolostron/mcoa-gateway/ratelimit"
@@ -92,16 +93,18 @@ type config struct {
 
 	tenantsConfigPath string
 
-	debug           debugConfig
-	server          serverConfig
-	tls             tlsConfig
-	metrics         metricsConfig
-	logs            logsConfig
-	traces          tracesConfig
-	alertmanager    alertmanagerConfig
-	probes          probesConfig
-	middleware      middlewareConfig
-	internalTracing internalTracingConfig
+	debug               debugConfig
+	server              serverConfig
+	tls                 tlsConfig
+	metrics             metricsConfig
+	logs                logsConfig
+	traces              tracesConfig
+	alertmanager        alertmanagerConfig
+	probes              probesConfig
+	middleware          middlewareConfig
+	internalTracing     internalTracingConfig
+	userpermsDisable    bool
+	userpermsMaxTenants int
 }
 
 type debugConfig struct {
@@ -623,6 +626,24 @@ func main() {
 				})
 			}
 
+			// Write-only traces do not call readChain, so startup does not load the hub.
+			// --userperms.disable keeps the header-required chain and does not call the hub.
+			tracesRead := cfg.traces.enabled && (cfg.traces.readEndpoint != nil || cfg.traces.readTemplateEndpoint != "" || cfg.traces.tempoEndpoint != nil)
+			base := userperms.Options{
+				Logger:     logger,
+				MaxTenants: cfg.userpermsMaxTenants,
+			}
+			deriveOpts := base
+			deriveOpts.Mode = userperms.ModeDerive
+			intersectOpts := base
+			intersectOpts.Mode = userperms.ModeIntersect
+			readChain := func(header string, opts userperms.Options) authentication.Middleware {
+				if cfg.userpermsDisable {
+					return userperms.HeaderChain(pm, header)
+				}
+				return userperms.ReadChain(pm, header, opts)
+			}
+
 			// Metrics.
 			if cfg.metrics.enabled {
 
@@ -658,9 +679,8 @@ func main() {
 					AlertmanagerEndpoint: cfg.metrics.alertmanagerEndpoint,
 				}
 
-				metricsReadMiddlewares := []func(http.Handler) http.Handler{
-					authentication.WithTenantFromHeader(cfg.metrics.tenantHeader),
-					authentication.WithTenantMiddlewares(pm.Middlewares),
+				metricsDerive := []func(http.Handler) http.Handler{
+					readChain(cfg.metrics.tenantHeader, deriveOpts),
 					authorization.WithTenantLabel(cfg.metrics.tenantLabel),
 					rateLimitMiddleware,
 				}
@@ -677,13 +697,16 @@ func main() {
 				}
 
 				metricsHandlerOptions = append(metricsHandlerOptions,
-					// Auth on all non-receive routes (including Alertmanager). PromQL
-					// label enforcement only on query/read/ui — not on silence POST,
-					// which has a JSON body the enforcer would overwrite.
-					metricsv1.WithGlobalMiddleware(metricsReadMiddlewares...),
+					// Derive stays off WithGlobalMiddleware, which also wraps Alertmanager.
+					metricsv1.WithQueryReadUIMiddleware(metricsDerive...),
+					// The PromQL enforcer stays on query, read, and UI. Alertmanager bodies are JSON.
 					metricsv1.WithQueryMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
 					metricsv1.WithReadMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
 					metricsv1.WithUIMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
+					metricsv1.WithAlertmanagerMiddleware(
+						readChain(cfg.metrics.tenantHeader, intersectOpts),
+						rateLimitMiddleware,
+					),
 				)
 
 				r.Group(func(r chi.Router) {
@@ -694,7 +717,7 @@ func main() {
 						metricslegacy.WithLogger(logger),
 						metricslegacy.WithRegistry(reg),
 						metricslegacy.WithHandlerInstrumenter(instrumenter),
-						metricslegacy.WithGlobalMiddleware(metricsReadMiddlewares...),
+						metricslegacy.WithGlobalMiddleware(metricsDerive...),
 						metricslegacy.WithGlobalMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
 					))
 
@@ -719,21 +742,25 @@ func main() {
 							stdlog.Fatalf("failed to read upstream probes TLS: %v", err)
 						}
 
-						probesHandler, err := probesv1.NewHandler(
-							cfg.probes.endpoint,
+						probesRead := []probesv1.HandlerOption{
+							probesv1.WithReadMiddleware(readChain(cfg.probes.tenantHeader, intersectOpts)),
+							probesv1.WithReadMiddleware(rateLimitMiddleware),
+						}
+						probesOptions := []probesv1.HandlerOption{
 							probesv1.WithLogger(logger),
 							probesv1.WithUpstreamTLSOptions(probesUpstreamClientOptions),
 							probesv1.WithTenantHeader(cfg.probes.tenantHeader),
 							probesv1.WithDialTimeout(cfg.probes.dialTimeout),
 							probesv1.WithKeepAliveTimeout(cfg.probes.keepAliveTimeout),
 							probesv1.WithTLSHandshakeTimeout(cfg.probes.tlsHandshakeTimeout),
-							probesv1.WithReadMiddleware(authentication.WithTenantFromHeader(cfg.probes.tenantHeader)),
-							probesv1.WithReadMiddleware(authentication.WithTenantMiddlewares(pm.Middlewares)),
-							probesv1.WithReadMiddleware(rateLimitMiddleware),
+						}
+						probesOptions = append(probesOptions, probesRead...)
+						probesOptions = append(probesOptions,
 							probesv1.WithWriteMiddleware(authentication.WithTenantFromHeader(cfg.probes.tenantHeader)),
 							probesv1.WithWriteMiddleware(authentication.WithTenantMiddlewares(pm.Middlewares)),
 							probesv1.WithWriteMiddleware(rateLimitMiddleware),
 						)
+						probesHandler, err := probesv1.NewHandler(cfg.probes.endpoint, probesOptions...)
 						if err != nil {
 							level.Error(logger).Log("msg", "failed to create probes handler", "err", err)
 						} else {
@@ -770,6 +797,21 @@ func main() {
 					stdlog.Fatalf("failed to read upstream logs TLS: %v", err)
 				}
 
+				logsOptions := []logsv1.HandlerOption{
+					logsv1.Logger(logger),
+					logsv1.WithRegistry(reg),
+					logsv1.WithHandlerInstrumenter(instrumenter),
+					// Write middleware: mTLS tenant extraction only
+					logsv1.WithWriteMiddleware(authentication.WithMTLSTenantExtraction(logger, cfg.logs.tenantHeader)),
+					logsv1.WithReadMiddleware(readChain(cfg.logs.tenantHeader, deriveOpts)),
+					logsv1.WithReadMiddleware(authorization.WithTenantLabel(cfg.logs.tenantLabel)),
+					logsv1.WithReadMiddleware(logsv1.WithEnforceAuthorizationLabels()),
+					// Rules-specific enforcement on top of the shared read/write chains.
+					logsv1.WithRulesReadMiddleware(logsv1.WithEnforceTenantAsRuleNamespace()),
+					logsv1.WithRulesWriteMiddleware(logsv1.WithEnforceTenantAsRuleNamespace()),
+					logsv1.WithRulesWriteMiddleware(logsv1.WithEnforceRuleLabels(cfg.logs.tenantLabel)),
+					logsv1.WithRulesLabelFilters(cfg.logs.rulesLabelFilters),
+				}
 				// Logs endpoints (write: mTLS auth, read: SSO or mTLS auth with label enforcement)
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.Timeout(cfg.logs.upstreamWriteTimeout))
@@ -781,28 +823,14 @@ func main() {
 							cfg.logs.rulesEndpoint,
 							cfg.logs.rulesReadOnly,
 							logsUpstreamClientOptions,
-							logsv1.Logger(logger),
-							logsv1.WithRegistry(reg),
-							logsv1.WithHandlerInstrumenter(instrumenter),
-							// Write middleware: mTLS tenant extraction only
-							logsv1.WithWriteMiddleware(authentication.WithMTLSTenantExtraction(logger, cfg.logs.tenantHeader)),
-							// Read middleware: tenant from header + authentication + label enforcement
-							logsv1.WithReadMiddleware(authentication.WithTenantFromHeader(cfg.logs.tenantHeader)),
-							logsv1.WithReadMiddleware(authentication.WithTenantMiddlewares(pm.Middlewares)),
-							logsv1.WithReadMiddleware(authorization.WithTenantLabel(cfg.logs.tenantLabel)),
-							logsv1.WithReadMiddleware(logsv1.WithEnforceAuthorizationLabels()),
-							// Rules-specific enforcement on top of the shared read/write chains.
-							logsv1.WithRulesReadMiddleware(logsv1.WithEnforceTenantAsRuleNamespace()),
-							logsv1.WithRulesWriteMiddleware(logsv1.WithEnforceTenantAsRuleNamespace()),
-							logsv1.WithRulesWriteMiddleware(logsv1.WithEnforceRuleLabels(cfg.logs.tenantLabel)),
-							logsv1.WithRulesLabelFilters(cfg.logs.rulesLabelFilters),
+							logsOptions...,
 						),
 					)
 				})
 			}
 
 			// Traces.
-			if cfg.traces.enabled && (cfg.traces.readEndpoint != nil || cfg.traces.readTemplateEndpoint != "" || cfg.traces.tempoEndpoint != nil) {
+			if tracesRead {
 				var loadInterval *time.Duration
 				if cfg.traces.enableCertWatcher {
 					loadInterval = &cfg.tls.reloadInterval
@@ -819,6 +847,15 @@ func main() {
 					stdlog.Fatalf("failed to read upstream traces TLS: %v", err)
 				}
 
+				tracesOptions := []tracesv1.HandlerOption{
+					tracesv1.Logger(logger),
+					tracesv1.WithRegistry(reg),
+					tracesv1.WithHandlerInstrumenter(instrumenter),
+					tracesv1.WithSpanRoutePrefix("/api/traces/v1"),
+					// Write middleware: mTLS tenant extraction only
+					tracesv1.WithWriteMiddleware(authentication.WithMTLSTenantExtraction(logger, cfg.traces.tenantHeader)),
+					tracesv1.WithReadMiddleware(readChain(cfg.traces.tenantHeader, intersectOpts)),
+				}
 				// Traces endpoints (write: mTLS auth, read: SSO or mTLS auth)
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.Timeout(cfg.traces.upstreamWriteTimeout))
@@ -829,15 +866,7 @@ func main() {
 							cfg.traces.tempoEndpoint,
 							cfg.traces.writeOTLPHTTPEndpoint,
 							tracesUpstreamTLSOptions,
-							tracesv1.Logger(logger),
-							tracesv1.WithRegistry(reg),
-							tracesv1.WithHandlerInstrumenter(instrumenter),
-							tracesv1.WithSpanRoutePrefix("/api/traces/v1"),
-							// Write middleware: mTLS tenant extraction only
-							tracesv1.WithWriteMiddleware(authentication.WithMTLSTenantExtraction(logger, cfg.traces.tenantHeader)),
-							// Read middleware: tenant from header + authentication
-							tracesv1.WithReadMiddleware(authentication.WithTenantFromHeader(cfg.traces.tenantHeader)),
-							tracesv1.WithReadMiddleware(authentication.WithTenantMiddlewares(pm.Middlewares)),
+							tracesOptions...,
 						),
 					)
 				})
@@ -1271,6 +1300,12 @@ func parseFlags() (config, error) {
 		"The number of concurrent requests that can buffered.")
 	flag.DurationVar(&cfg.middleware.backLogDurationConcurrentRequests, "middleware.backlog-duration-concurrent-requests", 1*time.Millisecond,
 		"The time duration to buffer up concurrent requests.")
+	flag.BoolVar(&cfg.userpermsDisable, "userperms.disable", false,
+		"Skip UserPermissions checks on read APIs. Reads then trust the client tenant header. For tests without a hub.")
+	flag.IntVar(&cfg.userpermsMaxTenants, "userperms.max-tenants", 0,
+		"Maximum ManagedClusters a derived read may cover. Values <= 0 use 100. "+
+			"Over the limit the request fails with 400 and the list is not truncated. "+
+			"Header intersection ignores this flag.")
 	flag.StringVar(&cfg.alertmanager.upstreamCAFile, "alertmanager.upstream-ca-file", "",
 		"PEM file of trusted CAs for TLS to Alertmanager upstreams. Empty uses the host's default root CAs.")
 	flag.StringVar(&cfg.alertmanager.upstreamServerName, "alertmanager.upstream-server-name", "",
