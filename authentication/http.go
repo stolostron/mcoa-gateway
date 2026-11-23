@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -29,6 +30,8 @@ const (
 	subjectKey contextKey = "subject"
 	// tenantKey is the key that holds the tenant in a request context.
 	tenantKey contextKey = "tenant"
+	// tenantHeaderKey is the header name a read chain will rewrite.
+	tenantHeaderKey contextKey = "tenantHeader"
 )
 
 // WithTenant finds the tenant from the URL parameters and adds it to the request context.
@@ -73,6 +76,29 @@ func GetTenant(ctx context.Context) (string, bool) {
 	tenant, ok := value.(string)
 
 	return tenant, ok
+}
+
+// GetTenantHeader returns the tenant header name stored for this request.
+func GetTenantHeader(ctx context.Context) (string, bool) {
+	header, ok := ctx.Value(tenantHeaderKey).(string)
+	return header, ok && header != ""
+}
+
+// WithTenantValue replaces the tenant in ctx.
+// It panics on an empty tenant so a caller cannot clear the value by accident.
+func WithTenantValue(ctx context.Context, tenant string) context.Context {
+	if tenant == "" {
+		panic("authentication: empty tenant")
+	}
+	return context.WithValue(ctx, tenantKey, tenant)
+}
+
+// ContextWithIdentity records a subject and groups on ctx.
+// The authenticators write these same keys. Tests use this to stand in for a login.
+func ContextWithIdentity(ctx context.Context, subject string, groups []string) context.Context {
+	ctx = context.WithValue(ctx, subjectKey, subject)
+	ctx = context.WithValue(ctx, groupsKey, groups)
+	return ctx
 }
 
 // GetSubject extracts the subject from provided context.
@@ -127,6 +153,37 @@ func WithTenantMiddlewares(mwFns ...MiddlewareFunc) Middleware {
 			httperr.PrometheusAPIError(w, "tenant not found, have you registered it?", http.StatusUnauthorized)
 		})
 	}
+}
+
+// WithDefaultTenantMiddlewares authenticates with the provider registered
+// under DefaultTenantName. It does not read GetTenant.
+//
+// Lookup happens per request. Providers register asynchronously, and a
+// request that arrives first is 401, the same as a missing tenant today.
+// A nil manager panics at construction.
+func WithDefaultTenantMiddlewares(pm *ProviderManager) Middleware {
+	if pm == nil {
+		panic("authentication: nil provider manager")
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			m, ok := pm.Middlewares(DefaultTenantName)
+			if !ok {
+				httperr.PrometheusAPIError(w, "default tenant authenticator is not registered", http.StatusUnauthorized)
+				return
+			}
+			m(next).ServeHTTP(w, r)
+		})
+	}
+}
+
+// providerLoginPath returns /{kind}/{registeredTenant}/login.
+// registeredTenant is the authenticator's own tenant field, never GetTenant.
+func providerLoginPath(kind, registeredTenant string) string {
+	if registeredTenant == "" {
+		panic("authentication: empty provider tenant")
+	}
+	return path.Join("/", kind, registeredTenant, "login")
 }
 
 // EnforceAccessTokenPresentOnSignalWrite enforces that the Authorization header is present in the incoming request

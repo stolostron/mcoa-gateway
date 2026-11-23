@@ -1,6 +1,7 @@
 package authentication
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -190,11 +191,14 @@ func TestWithTenantFromHeader(t *testing.T) {
 
 			// Create test handler that captures the tenant from context
 			var capturedTenant string
+			var capturedHeader string
+			var headerOK bool
 			testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				tenant, ok := GetTenant(r.Context())
 				if ok {
 					capturedTenant = tenant
 				}
+				capturedHeader, headerOK = GetTenantHeader(r.Context())
 				w.WriteHeader(http.StatusOK)
 			})
 
@@ -231,8 +235,114 @@ func TestWithTenantFromHeader(t *testing.T) {
 				if capturedTenant != tt.wantTenant {
 					t.Errorf("tenant = %q, want %q", capturedTenant, tt.wantTenant)
 				}
+				if !headerOK || capturedHeader != tt.tenantHeader {
+					t.Errorf("tenant header = %q, %t, want %q, true", capturedHeader, headerOK, tt.tenantHeader)
+				}
 			}
 		})
+	}
+}
+
+func TestWithTenantHeaderNameRecordsNameOnly(t *testing.T) {
+	t.Parallel()
+
+	const header = "THANOS-TENANT"
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set(header, "cluster.a")
+	rec := httptest.NewRecorder()
+	WithTenantHeaderName(header)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := GetTenant(r.Context()); ok {
+			t.Fatal("tenant was set from the client header")
+		}
+		got, ok := GetTenantHeader(r.Context())
+		if !ok || got != header {
+			t.Fatalf("header name = %q, %t", got, ok)
+		}
+		if r.Header.Get(header) != "cluster.a" {
+			t.Fatalf("client header = %q", r.Header.Get(header))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestWithTenantHeaderNameAllowsMissingHeader(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	rec := httptest.NewRecorder()
+	WithTenantHeaderName("THANOS-TENANT")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if _, ok := GetTenant(r.Context()); ok {
+			t.Fatal("tenant was set")
+		}
+		got, ok := GetTenantHeader(r.Context())
+		if !ok || got != "THANOS-TENANT" {
+			t.Fatalf("header name = %q, %t", got, ok)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !called || rec.Code != http.StatusNoContent {
+		t.Fatalf("called=%t status=%d", called, rec.Code)
+	}
+}
+
+func TestWithTenantHeaderNameRejectsEmpty(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("empty header name did not panic")
+		}
+	}()
+	WithTenantHeaderName("")
+}
+
+func TestWithTenantValue(t *testing.T) {
+	t.Parallel()
+
+	ctx := WithTenantValue(context.Background(), "cluster-a|cluster-b")
+	got, ok := GetTenant(ctx)
+	if !ok || got != "cluster-a|cluster-b" {
+		t.Fatalf("tenant = %q, %t, want cluster-a|cluster-b, true", got, ok)
+	}
+
+	ctx = WithTenantValue(ctx, "cluster-a")
+	got, ok = GetTenant(ctx)
+	if !ok || got != "cluster-a" {
+		t.Fatalf("replaced tenant = %q, %t, want cluster-a, true", got, ok)
+	}
+}
+
+func TestWithTenantValueRejectsEmpty(t *testing.T) {
+	t.Parallel()
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("empty tenant did not panic")
+		}
+	}()
+	WithTenantValue(context.Background(), "")
+}
+
+func TestGetTenantHeader(t *testing.T) {
+	t.Parallel()
+
+	if _, ok := GetTenantHeader(context.Background()); ok {
+		t.Fatal("missing header reported present")
+	}
+
+	ctx := context.WithValue(context.Background(), tenantHeaderKey, "")
+	if _, ok := GetTenantHeader(ctx); ok {
+		t.Fatal("empty header reported present")
+	}
+
+	ctx = context.WithValue(context.Background(), tenantHeaderKey, "THANOS-TENANT")
+	got, ok := GetTenantHeader(ctx)
+	if !ok || got != "THANOS-TENANT" {
+		t.Fatalf("header = %q, %t, want THANOS-TENANT, true", got, ok)
 	}
 }
 

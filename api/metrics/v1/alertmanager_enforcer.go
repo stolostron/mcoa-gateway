@@ -19,53 +19,33 @@ import (
 	"github.com/prometheus/alertmanager/api/v2/client/silence"
 	"github.com/prometheus/alertmanager/api/v2/models"
 	amlabels "github.com/prometheus/alertmanager/pkg/labels"
-	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/stolostron/mcoa-gateway/authentication"
 	"github.com/stolostron/mcoa-gateway/httperr"
 )
 
-// WithEnforceTenancyOnFilter returns a middleware that ensures that every filter has a tenant label enforced.
+// WithEnforceTenancyOnFilter returns middleware that sets the alert list filter
+// to the caller's allow-list. A caller filter on the tenant label is dropped.
 func WithEnforceTenancyOnFilter(label string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		// https://github.com/prometheus-community/prom-label-proxy/
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			tenant, ok := authentication.GetTenant(r.Context())
-			if !ok {
-				httperr.PrometheusAPIError(w, "error finding tenant", http.StatusInternalServerError)
-
+			allow, err := tenantFromRequest(r)
+			if err != nil {
+				writeTenantError(w, err)
 				return
 			}
-
-			matcher := &labels.Matcher{
-				Name:  label,
-				Type:  labels.MatchEqual,
-				Value: tenant,
+			m, err := allow.filterMatcher(label)
+			if err != nil {
+				writeTenantError(w, err)
+				return
 			}
-			matcherStr := matcher.String()
-
+			kept, err := callerFilters(label, r.URL.Query()["filter"])
+			if err != nil {
+				writeTenantError(w, err)
+				return
+			}
 			q := r.URL.Query()
-			filters := q["filter"]
-			modified := []string{matcherStr}
-
-			if len(filters) == 0 {
-				q.Set("filter", matcherStr)
-			} else {
-				for _, filter := range filters {
-					m, err := amlabels.ParseMatcher(filter)
-					if err != nil {
-						return
-					}
-					// Keep the original matcher in case of multi label values because
-					// the user might want to filter on a specific value.
-					if m.Name == label {
-						continue
-					}
-					modified = append(modified, filter)
-				}
-			}
-
-			q["filter"] = modified
+			q["filter"] = append([]string{m.String()}, kept...)
 			q.Del(label)
 			r.URL.RawQuery = q.Encode()
 			next.ServeHTTP(w, r)
@@ -73,54 +53,38 @@ func WithEnforceTenancyOnFilter(label string) func(http.Handler) http.Handler {
 	}
 }
 
-// WithEnforceTenancyOnSilenceMatchers returns a middleware that ensures POST silence requests
-// include the tenant label matcher.
+// WithEnforceTenancyOnSilenceMatchers returns middleware that requires a POST
+// silence to name exactly one allow-listed cluster as an equality matcher.
 func WithEnforceTenancyOnSilenceMatchers(label string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		// https://github.com/prometheus-community/prom-label-proxy/injectproxy/silences.go
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			tenant, ok := authentication.GetTenant(r.Context())
-			if !ok {
-				httperr.PrometheusAPIError(w, "error finding tenant", http.StatusInternalServerError)
-				return
-			}
-
 			if r.Method != http.MethodPost {
 				httperr.PrometheusAPIError(w, "error method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
 
-			var sil models.PostableSilence
+			allow, err := tenantFromRequest(r)
+			if err != nil {
+				writeTenantError(w, err)
+				return
+			}
 
+			var sil models.PostableSilence
 			if err := json.NewDecoder(r.Body).Decode(&sil); err != nil {
 				httperr.PrometheusAPIError(w, fmt.Sprintf("bad request: can't decode: %v", err), http.StatusBadRequest)
 				return
 			}
-
 			if sil.ID != "" {
-				// This is an update for an existing silence.
 				httperr.PrometheusAPIError(w, "updates to silence by ID not allowed", http.StatusUnprocessableEntity)
 				return
 			}
 
-			isEqual, isRegex := true, false
-			modified := models.Matchers{
-				&models.Matcher{Name: &label, Value: &tenant, IsRegex: &isRegex, IsEqual: &isEqual},
-			}
-			for _, m := range sil.Matchers {
-				if m.Name != nil && *m.Name == label {
-					continue
-				}
-				modified = append(modified, m)
-			}
-
-			// At least one matcher in addition to the enforced label is required,
-			// otherwise all alerts would be silenced
-			if len(modified) < 2 {
-				httperr.PrometheusAPIError(w, "need at least one matcher, got none", http.StatusBadRequest)
+			matchers, err := allow.silencePost(label, sil.Matchers)
+			if err != nil {
+				writeTenantError(w, err)
 				return
 			}
-			sil.Matchers = modified
+			sil.Matchers = matchers
 
 			var buf bytes.Buffer
 			if err := json.NewEncoder(&buf).Encode(&sil); err != nil {
@@ -138,9 +102,8 @@ func WithEnforceTenancyOnSilenceMatchers(label string) func(http.Handler) http.H
 	}
 }
 
-// WithEnforceTenancyOnSilenceID ensures the silence in the path belongs to the tenant
-// before proxying GET or DELETE /api/v2/silence/{id} to Alertmanager.
-// Adapted from https://github.com/prometheus-community/prom-label-proxy/injectproxy/silences.go
+// WithEnforceTenancyOnSilenceID ensures the silence in the path belongs to one
+// cluster in the allow-list before proxying GET or DELETE.
 func WithEnforceTenancyOnSilenceID(label string, upstream *url.URL, transport http.RoundTripper) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -150,9 +113,9 @@ func WithEnforceTenancyOnSilenceID(label string, upstream *url.URL, transport ht
 				return
 			}
 
-			tenant, ok := authentication.GetTenant(r.Context())
-			if !ok {
-				httperr.PrometheusAPIError(w, "error finding tenant", http.StatusInternalServerError)
+			allow, err := tenantFromRequest(r)
+			if err != nil {
+				writeTenantError(w, err)
 				return
 			}
 
@@ -167,7 +130,7 @@ func WithEnforceTenancyOnSilenceID(label string, upstream *url.URL, transport ht
 				return
 			}
 
-			if !hasMatcherForLabel(sil.Matchers, label, tenant) {
+			if sil == nil || !allow.ownsSilence(label, sil.Matchers) {
 				httperr.PrometheusAPIError(w, "forbidden", http.StatusForbidden)
 				return
 			}
@@ -178,35 +141,114 @@ func WithEnforceTenancyOnSilenceID(label string, upstream *url.URL, transport ht
 	}
 }
 
+// silenceListHandler serves GET silences. It loads the upstream list without a
+// tenant filter and writes the silences ownsSilence accepts.
+func silenceListHandler(label string, upstream *url.URL, transport http.RoundTripper) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		allow, err := tenantFromRequest(r)
+		if err != nil {
+			writeTenantError(w, err)
+			return
+		}
+		kept, err := callerFilters(label, r.URL.Query()["filter"])
+		if err != nil {
+			writeTenantError(w, err)
+			return
+		}
+		raw, err := listSilences(r.Context(), upstream, transport, kept)
+		if err != nil {
+			var bad *silence.GetSilencesBadRequest
+			if errors.As(err, &bad) {
+				httperr.PrometheusAPIError(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			// The client error string includes the upstream payload.
+			httperr.PrometheusAPIError(w, "bad gateway", http.StatusBadGateway)
+			return
+		}
+		body, err := json.Marshal(allow.visibleSilences(label, raw))
+		if err != nil {
+			httperr.PrometheusAPIError(w, "error encoding silences", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	})
+}
+
+// tenantFromRequest reads GetTenant and parses it.
+// Missing GetTenant is 500. A present string that does not parse is the parse error.
+func tenantFromRequest(r *http.Request) (tenantAllowList, error) {
+	tenant, ok := authentication.GetTenant(r.Context())
+	if !ok {
+		return tenantAllowList{}, &allowListError{status: http.StatusInternalServerError, msg: "error finding tenant"}
+	}
+	return parseTenantAllowList(tenant)
+}
+
+// writeTenantError writes err when it is an *allowListError.
+// Any other error is 500 with a fixed message.
+func writeTenantError(w http.ResponseWriter, err error) {
+	var allow *allowListError
+	if errors.As(err, &allow) {
+		httperr.PrometheusAPIError(w, allow.Error(), allow.Status())
+		return
+	}
+	httperr.PrometheusAPIError(w, "error finding tenant", http.StatusInternalServerError)
+}
+
+// callerFilters returns the raw filter strings whose label name is not label.
+// Order of the kept strings is preserved. A value amlabels.ParseMatcher rejects
+// is an error. A filter on the tenant label is dropped.
+func callerFilters(label string, raw []string) ([]string, error) {
+	kept := make([]string, 0, len(raw))
+	for _, filter := range raw {
+		m, err := amlabels.ParseMatcher(filter)
+		if err != nil {
+			return nil, &allowListError{status: http.StatusBadRequest, msg: "invalid filter"}
+		}
+		if m.Name == label {
+			continue
+		}
+		kept = append(kept, filter)
+	}
+	return kept, nil
+}
+
+func listSilences(ctx context.Context, upstream *url.URL, transport http.RoundTripper, filters []string) (models.GettableSilences, error) {
+	params := silence.NewGetSilencesParams().WithContext(ctx)
+	if len(filters) > 0 {
+		params.SetFilter(filters)
+	}
+	res, err := alertmanagerAPI(upstream, transport).Silence.GetSilences(params)
+	if err != nil {
+		return nil, err
+	}
+	return res.Payload, nil
+}
+
 func getSilenceByID(ctx context.Context, upstream *url.URL, transport http.RoundTripper, id string) (*models.GettableSilence, error) {
+	params := silence.NewGetSilenceParams().WithContext(ctx)
+	params.SetSilenceID(strfmt.UUID(id))
+	res, err := alertmanagerAPI(upstream, transport).Silence.GetSilence(params)
+	if err != nil {
+		return nil, err
+	}
+	return res.Payload, nil
+}
+
+// alertmanagerAPI is the client constructor getSilenceByID and listSilences share.
+// Nil transport stays http.DefaultTransport.
+func alertmanagerAPI(upstream *url.URL, transport http.RoundTripper) *client.AlertmanagerAPI {
 	if transport == nil {
 		transport = http.DefaultTransport
 	}
-
 	rt := runtimeclient.NewWithClient(
 		upstream.Host,
 		path.Join(upstream.Path, "/api/v2"),
 		[]string{upstream.Scheme},
 		&http.Client{Transport: transport},
 	)
-	amc := client.New(rt, strfmt.Default)
-
-	params := silence.NewGetSilenceParams().WithContext(ctx)
-	params.SetSilenceID(strfmt.UUID(id))
-
-	res, err := amc.Silence.GetSilence(params)
-	if err != nil {
-		return nil, err
-	}
-
-	return res.Payload, nil
-}
-
-func hasMatcherForLabel(matchers models.Matchers, name, value string) bool {
-	for _, m := range matchers {
-		if *m.Name == name && !*m.IsRegex && *m.Value == value {
-			return true
-		}
-	}
-	return false
+	return client.New(rt, strfmt.Default)
 }

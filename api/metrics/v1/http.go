@@ -158,7 +158,34 @@ func WithAlertmanagerSilenceIDWriteMiddleware(m ...func(http.Handler) http.Handl
 	}
 }
 
-// WithGlobalMiddleware adds a middleware for all operations, execpt the receive and rules-raw write paths.
+// WithQueryReadUIMiddleware appends middleware to query, read, and UI routes.
+// UI includes rules GET. It does not append to Alertmanager, remote-write, or rules-raw PUT.
+func WithQueryReadUIMiddleware(m ...func(http.Handler) http.Handler) HandlerOption {
+	return func(h *handlerConfiguration) {
+		h.queryMiddlewares = append(h.queryMiddlewares, m...)
+		h.readMiddlewares = append(h.readMiddlewares, m...)
+		h.uiMiddlewares = append(h.uiMiddlewares, m...)
+	}
+}
+
+// WithAlertmanagerMiddleware appends middleware to alerts read, silence read,
+// silence write, silence-id read, and silence-id write.
+// It does not append to query, read, or UI.
+func WithAlertmanagerMiddleware(m ...func(http.Handler) http.Handler) HandlerOption {
+	return func(h *handlerConfiguration) {
+		h.alertmanagerMiddleware.alertsReadMiddlewares = append(h.alertmanagerMiddleware.alertsReadMiddlewares, m...)
+		h.alertmanagerMiddleware.silenceReadMiddlewares = append(h.alertmanagerMiddleware.silenceReadMiddlewares, m...)
+		h.alertmanagerMiddleware.silenceWriteMiddlewares = append(h.alertmanagerMiddleware.silenceWriteMiddlewares, m...)
+		h.alertmanagerMiddleware.silenceIDReadMiddlewares = append(h.alertmanagerMiddleware.silenceIDReadMiddlewares, m...)
+		h.alertmanagerMiddleware.silenceIDWriteMiddlewares = append(h.alertmanagerMiddleware.silenceIDWriteMiddlewares, m...)
+	}
+}
+
+// WithGlobalMiddleware adds middleware to query, read, UI, and every Alertmanager route.
+// It does not add middleware to remote-write or rules-raw PUT.
+// The metrics derive slice includes authorization.WithTenantLabel and the PromQL
+// enforcer. Pass that slice to WithQueryReadUIMiddleware. Pass the derive ReadChain
+// without those two to WithAlertmanagerMiddleware.
 func WithGlobalMiddleware(m ...func(http.Handler) http.Handler) HandlerOption {
 	return func(h *handlerConfiguration) {
 		h.uiMiddlewares = append(h.uiMiddlewares, m...)
@@ -448,6 +475,8 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 			}
 		}
 
+		alertmanagerSilenceTransport := otelhttp.NewTransport(alertmanagerTransport)
+
 		r.Group(func(r chi.Router) {
 			r.Use(func(handler http.Handler) http.Handler {
 				return server.InjectLabelsCtx(
@@ -470,10 +499,13 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 				)
 			})
 			r.Use(c.alertmanagerMiddleware.silenceReadMiddlewares...)
-			r.Use(WithEnforceTenancyOnFilter(c.tenantLabel))
-			r.Use(server.StripPrefix("/api/metrics/v1/am"))
-
-			r.Method(http.MethodGet, AlertmanagerSilencesRoute, proxyAlertmanager)
+			// Alertmanager 0.33 matches silence filters by matcher identity, so an
+			// alert regexp would hide the equality silences POST stores.
+			r.Method(http.MethodGet, AlertmanagerSilencesRoute, silenceListHandler(
+				c.tenantLabel,
+				endpoints.AlertmanagerEndpoint,
+				alertmanagerSilenceTransport,
+			))
 		})
 
 		r.Group(func(r chi.Router) {
@@ -490,7 +522,6 @@ func NewHandler(endpoints Endpoints, tlsOptions *tls.UpstreamOptions, opts ...Ha
 			r.Method(http.MethodPost, AlertmanagerSilencesRoute, proxyAlertmanager)
 		})
 
-		alertmanagerSilenceTransport := otelhttp.NewTransport(alertmanagerTransport)
 		enforceTenancyOnSilenceID := WithEnforceTenancyOnSilenceID(
 			c.tenantLabel,
 			endpoints.AlertmanagerEndpoint,

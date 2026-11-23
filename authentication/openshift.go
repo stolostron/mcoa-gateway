@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"path"
 	"strings"
 	"time"
 
@@ -443,15 +442,9 @@ func (a OpenShiftAuthenticator) Middleware() Middleware {
 
 			cookie, err := r.Cookie(a.cookieName)
 			if err != nil {
-				tenant, ok := GetTenant(r.Context())
-				if !ok {
-					const msg = "error finding tenant"
-					level.Warn(a.logger).Log("msg", msg)
-					httperr.PrometheusAPIError(w, msg, http.StatusBadRequest)
-					return
-				}
-				// Redirect users to the oauth2 login
-				w.Header().Set("Location", path.Join("/openshift", tenant, "/login?route=", r.URL.Path))
+				// The login route is the authenticator's own tenant. Derive mode has no client tenant.
+				loc := providerLoginPath("openshift", a.tenant) + "?route=" + url.QueryEscape(r.URL.Path)
+				w.Header().Set("Location", loc)
 				httperr.PrometheusAPIError(w, "failed to find token", http.StatusFound)
 				return
 			}

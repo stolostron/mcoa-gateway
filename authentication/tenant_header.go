@@ -23,6 +23,24 @@ var (
 	maxTenants = 100
 )
 
+// WithTenantHeaderName records header as the tenant header name for this request.
+// It does not read the header, does not require it, and does not set a tenant.
+// Derive mode is paired with this, not with WithTenantFromHeader.
+//
+// An empty header panics at construction. The client-header regex and the
+// header parser's max of 100 are not applied here.
+func WithTenantHeaderName(header string) Middleware {
+	if header == "" {
+		panic("authentication: empty tenant header name")
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := context.WithValue(r.Context(), tenantHeaderKey, header)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
 // WithTenantFromHeader extracts tenant(s) from the specified HTTP header and adds them to the request context.
 // This is designed for read-path authentication where clients (like Grafana) specify the tenant via headers.
 //
@@ -111,8 +129,10 @@ func WithTenantFromHeader(tenantHeader string) Middleware {
 			// This maintains compatibility with existing authorization middleware
 			tenantString := strings.Join(tenants, "|")
 
-			// Set tenant in request context for downstream middleware
+			// Set tenant in request context for downstream middleware.
+			// The header name travels with it so a later authorizer rewrites the same header.
 			ctx := context.WithValue(r.Context(), tenantKey, tenantString)
+			ctx = context.WithValue(ctx, tenantHeaderKey, tenantHeader)
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
