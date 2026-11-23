@@ -1,10 +1,47 @@
-package userperms
+package mcra
 
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
+
+// clusterSet is an immutable set of managed cluster names.
+// The zero value admits nothing. names is never appended to after newClusterSet returns.
+type clusterSet struct {
+	names []string
+}
+
+func newClusterSet(names []string) clusterSet {
+	if len(names) == 0 {
+		return clusterSet{}
+	}
+	cp := make([]string, 0, len(names))
+	for _, name := range names {
+		if name != "" {
+			cp = append(cp, name)
+		}
+	}
+	if len(cp) == 0 {
+		return clusterSet{}
+	}
+	slices.Sort(cp)
+	cp = slices.Compact(cp)
+	return clusterSet{names: cp}
+}
+
+func (s clusterSet) has(name string) bool {
+	_, ok := slices.BinarySearch(s.names, name)
+	return ok
+}
+
+func (s clusterSet) len() int { return len(s.names) }
+
+// joined is the derive tenant. names is already sorted and de-duplicated.
+func (s clusterSet) joined() string {
+	return strings.Join(s.names, "|")
+}
 
 // admitted is a tenant string that is safe to store and to forward.
 // admit and derive are the only constructors.

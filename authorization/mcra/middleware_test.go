@@ -1,4 +1,4 @@
-package userperms
+package mcra
 
 import (
 	"context"
@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,77 +14,24 @@ import (
 
 	"github.com/go-kit/log"
 
-	clusterviewv1alpha1 "github.com/stolostron/cluster-lifecycle-api/clusterview/v1alpha1"
 	"github.com/stolostron/mcoa-gateway/authentication"
 )
-
-func TestCredentialFromContext(t *testing.T) {
-	t.Parallel()
-
-	groups := []string{"b", "", "a", "b"}
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("Authorization", "Bearer tok")
-	var bearer credential
-	authentication.WithAccessToken()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := authentication.ContextWithIdentity(r.Context(), "alice", groups)
-		cred, err := credentialFromContext(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		bearer = cred
-	})).ServeHTTP(httptest.NewRecorder(), req)
-	if bearer.kind != credBearer || bearer.token != "tok" || bearer.user != "" {
-		t.Fatalf("bearer = %#v", bearer)
-	}
-	if !slices.Equal(groups, []string{"b", "", "a", "b"}) {
-		t.Fatal("bearer path mutated groups")
-	}
-
-	req = httptest.NewRequest(http.MethodGet, "/", nil)
-	var impersonated credential
-	authentication.WithAccessToken()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := authentication.ContextWithIdentity(r.Context(), "alice", groups)
-		cred, err := credentialFromContext(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		impersonated = cred
-	})).ServeHTTP(httptest.NewRecorder(), req)
-	if impersonated.kind != credImpersonate || impersonated.user != "alice" || impersonated.token != "" {
-		t.Fatalf("impersonate = %#v", impersonated)
-	}
-	if !slices.Equal(impersonated.groups, []string{"a", "b"}) {
-		t.Fatalf("groups = %#v", impersonated.groups)
-	}
-	if !slices.Equal(groups, []string{"b", "", "a", "b"}) {
-		t.Fatal("impersonation mutated the context groups")
-	}
-
-	req = httptest.NewRequest(http.MethodGet, "/", nil)
-	authentication.WithAccessToken()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, err := credentialFromContext(r.Context()); err != errNoCredential {
-			t.Fatalf("err = %v", err)
-		}
-	})).ServeHTTP(httptest.NewRecorder(), req)
-}
 
 func TestMiddlewareRewritesAdmittedTenant(t *testing.T) {
 	t.Parallel()
 
 	var calls atomic.Int32
-	loader := funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
-		calls.Add(1)
-		if cred.kind != credBearer || cred.token != "user-token" {
-			return clusterSet{}, fmt.Errorf("cred = %#v", cred)
-		}
-		return newClusterSet([]string{"cluster-a", "cluster-c"}), nil
-	})
-	now := time.Unix(50, 0)
 	mw := NewMiddleware(Options{
-		TTL:    0,
+		TTL:    time.Hour,
 		Logger: log.NewNopLogger(),
-		loader: loader,
-		now:    func() time.Time { return now },
+		now:    func() time.Time { return time.Unix(50, 0) },
+		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
+			calls.Add(1)
+			if err := tokenNotVisible(ctx); err != nil {
+				return grantIndex{}, err
+			}
+			return userGrant("alice", "cluster-a", "cluster-c"), nil
+		}),
 	})
 	got := runMiddleware(t, mw, "user-token", "THANOS-TENANT", "cluster-b|cluster-a", "alice", []string{"g"})
 	if got.code != http.StatusNoContent || !got.next {
@@ -95,12 +40,12 @@ func TestMiddlewareRewritesAdmittedTenant(t *testing.T) {
 	if got.tenant != "cluster-a" || got.header != "cluster-a" || got.requestHeader != "cluster-a" {
 		t.Fatalf("tenant=%q header=%q request=%q", got.tenant, got.header, got.requestHeader)
 	}
-	again := runMiddleware(t, mw, "user-token", "THANOS-TENANT", "cluster-b|cluster-a", "", nil)
+	again := runMiddleware(t, mw, "user-token", "THANOS-TENANT", "cluster-b|cluster-a", "alice", nil)
 	if again.tenant != "cluster-a" || calls.Load() != 1 {
 		t.Fatalf("second tenant=%q calls=%d", again.tenant, calls.Load())
 	}
 
-	both := runMiddleware(t, mw, "user-token", "THANOS-TENANT", "cluster-c|cluster-a", "", nil)
+	both := runMiddleware(t, mw, "user-token", "THANOS-TENANT", "cluster-c|cluster-a", "alice", nil)
 	if both.tenant != "cluster-c|cluster-a" || both.header != "cluster-c|cluster-a" {
 		t.Fatalf("tenant=%q header=%q", both.tenant, both.header)
 	}
@@ -109,12 +54,14 @@ func TestMiddlewareRewritesAdmittedTenant(t *testing.T) {
 func TestMiddlewareFailClosed(t *testing.T) {
 	t.Parallel()
 
-	allowed := funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
-		return newClusterSet([]string{"cluster-z"}), nil
-	})
+	var calls atomic.Int32
 	now := func() time.Time { return time.Unix(1, 0) }
+	allowed := funcLoader(func(ctx context.Context) (grantIndex, error) {
+		calls.Add(1)
+		return userGrant("alice", "cluster-z"), nil
+	})
 	mw := NewMiddleware(Options{Logger: log.NewNopLogger(), loader: allowed, now: now, TTL: time.Hour})
-	denied := runMiddleware(t, mw, "user-token", "THANOS-TENANT", "cluster-a|cluster-b", "", nil)
+	denied := runMiddleware(t, mw, "user-token", "THANOS-TENANT", "cluster-a|cluster-b", "alice", nil)
 	if denied.next || denied.code != http.StatusForbidden || denied.errMsg != "no access to the requested clusters" {
 		t.Fatalf("denied = %+v", denied)
 	}
@@ -122,12 +69,15 @@ func TestMiddlewareFailClosed(t *testing.T) {
 		t.Fatalf("request header = %q", denied.requestHeader)
 	}
 
-	missing := runMiddleware(t, mw, "", "THANOS-TENANT", "cluster-a", "", nil)
+	missing := runMiddleware(t, mw, "super-secret-token", "THANOS-TENANT", "cluster-a", "", nil)
 	if missing.next || missing.code != http.StatusUnauthorized || missing.errMsg != "subject credential required" {
 		t.Fatalf("missing = %+v", missing)
 	}
 	if missing.requestHeader != "cluster-a" {
 		t.Fatalf("missing creds wrote header %q", missing.requestHeader)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("missing subject called Load, calls=%d", calls.Load())
 	}
 
 	logger := &captureLogger{}
@@ -135,8 +85,11 @@ func TestMiddlewareFailClosed(t *testing.T) {
 		Logger: logger,
 		now:    now,
 		TTL:    time.Hour,
-		loader: funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
-			return clusterSet{}, errHubDenied
+		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
+			if err := tokenNotVisible(ctx); err != nil {
+				return grantIndex{}, err
+			}
+			return grantIndex{}, errHubDenied
 		}),
 	})
 	got := runMiddleware(t, hubDenied, "super-secret-token", "X-Scope-OrgID", "cluster-a", "alice", nil)
@@ -147,7 +100,7 @@ func TestMiddlewareFailClosed(t *testing.T) {
 		t.Fatalf("hub denied wrote header %q", got.requestHeader)
 	}
 	logged := fmt.Sprint(logger.got)
-	if !strings.Contains(logged, "bearer") || !strings.Contains(logged, "alice") {
+	if !strings.Contains(logged, "alice") {
 		t.Fatalf("log = %s", logged)
 	}
 	if strings.Contains(logged, "super-secret-token") {
@@ -157,37 +110,13 @@ func TestMiddlewareFailClosed(t *testing.T) {
 	unavailable := NewMiddleware(Options{
 		now: now,
 		TTL: time.Hour,
-		loader: funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
-			return clusterSet{}, errHubUnavailable
+		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
+			return grantIndex{}, errHubUnavailable
 		}),
 	})
-	got = runMiddleware(t, unavailable, "user-token", "THANOS-TENANT", "cluster-a", "", nil)
+	got = runMiddleware(t, unavailable, "user-token", "THANOS-TENANT", "cluster-a", "alice", nil)
 	if got.next || got.code != http.StatusServiceUnavailable || got.errMsg != "cannot evaluate cluster access" {
 		t.Fatalf("unavailable = %+v", got)
-	}
-}
-
-func TestMiddlewareImpersonatesWithoutToken(t *testing.T) {
-	t.Parallel()
-
-	loader := funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
-		if cred.kind != credImpersonate || cred.user != "alice" || cred.token != "" {
-			return clusterSet{}, fmt.Errorf("cred = %#v", cred)
-		}
-		if !slices.Equal(cred.groups, []string{"a", "b"}) {
-			return clusterSet{}, fmt.Errorf("groups = %#v", cred.groups)
-		}
-		return newClusterSet([]string{"cluster-a"}), nil
-	})
-	mw := NewMiddleware(Options{
-		Logger: log.NewNopLogger(),
-		loader: loader,
-		now:    func() time.Time { return time.Unix(1, 0) },
-		TTL:    time.Hour,
-	})
-	got := runMiddleware(t, mw, "", "THANOS-TENANT", "cluster-a", "alice", []string{"b", "", "a"})
-	if got.code != http.StatusNoContent || !got.next || got.tenant != "cluster-a" || got.header != "cluster-a" {
-		t.Fatalf("%+v", got)
 	}
 }
 
@@ -197,9 +126,9 @@ func TestMiddlewareRejectsMissingContext(t *testing.T) {
 	mw := NewMiddleware(Options{
 		Logger: log.NewNopLogger(),
 		now:    func() time.Time { return time.Unix(1, 0) },
-		loader: funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
+		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
 			t.Fatal("list called without a tenant")
-			return clusterSet{}, nil
+			return grantIndex{}, nil
 		}),
 	})
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -239,9 +168,9 @@ func TestNewMiddlewarePrivateIndexesDoNotShare(t *testing.T) {
 		TTL:        time.Hour,
 		now:        now,
 		Logger:     log.NewNopLogger(),
-		loader: funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
+		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
 			callsA.Add(1)
-			return newClusterSet([]string{"cluster-a"}), nil
+			return userGrant("alice", "cluster-a"), nil
 		}),
 	})
 	b := NewMiddleware(Options{
@@ -249,54 +178,19 @@ func TestNewMiddlewarePrivateIndexesDoNotShare(t *testing.T) {
 		TTL:        time.Hour,
 		now:        now,
 		Logger:     log.NewNopLogger(),
-		loader: funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
+		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
 			callsB.Add(1)
-			return newClusterSet([]string{"cluster-b"}), nil
+			return userGrant("alice", "cluster-b"), nil
 		}),
 	})
-	gotA := runMiddleware(t, a, "user-token", "THANOS-TENANT", "cluster-a|cluster-b", "", nil)
-	gotB := runMiddleware(t, b, "user-token", "THANOS-TENANT", "cluster-a|cluster-b", "", nil)
-	againA := runMiddleware(t, a, "user-token", "THANOS-TENANT", "cluster-a|cluster-b", "", nil)
+	gotA := runMiddleware(t, a, "user-token", "THANOS-TENANT", "cluster-a|cluster-b", "alice", nil)
+	gotB := runMiddleware(t, b, "user-token", "THANOS-TENANT", "cluster-a|cluster-b", "alice", nil)
+	againA := runMiddleware(t, a, "user-token", "THANOS-TENANT", "cluster-a|cluster-b", "alice", nil)
 	if gotA.tenant != "cluster-a" || gotB.tenant != "cluster-b" || againA.tenant != "cluster-a" {
 		t.Fatalf("a=%q b=%q again=%q", gotA.tenant, gotB.tenant, againA.tenant)
 	}
 	if callsA.Load() != 1 || callsB.Load() != 1 {
 		t.Fatalf("calls a=%d b=%d", callsA.Load(), callsB.Load())
-	}
-}
-
-func TestNewMiddlewareSharesHubIndex(t *testing.T) {
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		if r.Header.Get("Authorization") != "Bearer user-token" {
-			http.Error(w, "auth", http.StatusUnauthorized)
-			return
-		}
-		writePermissionList(w, "", permission("view", binding("cluster-a", clusterviewv1alpha1.BindingScopeCluster)))
-	}))
-	t.Cleanup(srv.Close)
-	path := writeHubKubeconfig(t, srv.URL)
-
-	long := NewMiddleware(Options{Kubeconfig: path, TTL: time.Hour, Logger: log.NewNopLogger()})
-	short := NewMiddleware(Options{Kubeconfig: path, TTL: time.Nanosecond, Logger: log.NewNopLogger()})
-	other := NewMiddleware(Options{Kubeconfig: path, TTL: time.Hour, Logger: log.NewNopLogger()})
-
-	first := runMiddleware(t, long, "user-token", "THANOS-TENANT", "cluster-a|cluster-b", "", nil)
-	if first.code != http.StatusNoContent || first.tenant != "cluster-a" {
-		t.Fatalf("first = %+v", first)
-	}
-	second := runMiddleware(t, other, "user-token", "THANOS-TENANT", "cluster-a|cluster-b", "", nil)
-	if second.tenant != "cluster-a" || calls.Load() != 1 {
-		t.Fatalf("shared tenant=%q calls=%d body=%s", second.tenant, calls.Load(), second.errMsg)
-	}
-	third := runMiddleware(t, short, "user-token", "THANOS-TENANT", "cluster-a|cluster-b", "", nil)
-	if third.tenant != "cluster-a" || calls.Load() != 2 {
-		t.Fatalf("short tenant=%q calls=%d", third.tenant, calls.Load())
-	}
-	fourth := runMiddleware(t, long, "user-token", "THANOS-TENANT", "cluster-a|cluster-b", "", nil)
-	if fourth.tenant != "cluster-a" || calls.Load() != 2 {
-		t.Fatalf("long was evicted by the short index, calls=%d", calls.Load())
 	}
 }
 
@@ -309,11 +203,11 @@ func TestDeriveMiddleware(t *testing.T) {
 		return NewMiddleware(Options{
 			Logger: log.NewNopLogger(),
 			Mode:   ModeDerive,
-			loader: funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
-				if cred.kind != credBearer || cred.token != "user-token" {
-					return clusterSet{}, fmt.Errorf("cred = %#v", cred)
+			loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
+				if err := tokenNotVisible(ctx); err != nil {
+					return grantIndex{}, err
 				}
-				return newClusterSet(names), nil
+				return userGrant("alice", names...), nil
 			}),
 			now: now,
 			TTL: time.Hour,
@@ -353,8 +247,8 @@ func TestDeriveMiddleware(t *testing.T) {
 		MaxTenants: 2,
 		now:        now,
 		TTL:        time.Hour,
-		loader: funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
-			return newClusterSet([]string{"secret-cluster", "b", "a"}), nil
+		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
+			return userGrant("alice", "secret-cluster", "b", "a"), nil
 		}),
 	})
 	over := runDerive(t, capped, "THANOS-TENANT", true, "client-name")
@@ -386,15 +280,14 @@ func TestDeriveMiddlewareDefaultCap(t *testing.T) {
 	for i := range names {
 		names[i] = fmt.Sprintf("c%03d", i)
 	}
-	loader := funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
-		return newClusterSet(names), nil
-	})
 	over := NewMiddleware(Options{
 		Logger: log.NewNopLogger(),
 		Mode:   ModeDerive,
-		loader: loader,
-		now:    now,
-		TTL:    time.Hour,
+		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
+			return userGrant("alice", names...), nil
+		}),
+		now: now,
+		TTL: time.Hour,
 	})
 	got := runDerive(t, over, "THANOS-TENANT", false, "")
 	if got.next || got.code != http.StatusBadRequest || got.errMsg != "too many tenants (max 100)" {
@@ -410,8 +303,8 @@ func TestDeriveMiddlewareDefaultCap(t *testing.T) {
 		Logger:     log.NewNopLogger(),
 		Mode:       ModeDerive,
 		MaxTenants: -1,
-		loader: funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
-			return newClusterSet(exact), nil
+		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
+			return userGrant("alice", exact...), nil
 		}),
 		now: now,
 		TTL: time.Hour,
@@ -434,9 +327,9 @@ func TestDeriveMiddlewareRejectsClientTenant(t *testing.T) {
 		Mode:   ModeDerive,
 		now:    func() time.Time { return time.Unix(1, 0) },
 		TTL:    time.Hour,
-		loader: funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
+		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
 			calls.Add(1)
-			return newClusterSet([]string{"cluster-a"}), nil
+			return userGrant("alice", "cluster-a"), nil
 		}),
 	})
 	var result httpResult
@@ -475,11 +368,11 @@ func TestIntersectIgnoresMaxTenants(t *testing.T) {
 		MaxTenants: 1,
 		now:        func() time.Time { return time.Unix(1, 0) },
 		TTL:        time.Hour,
-		loader: funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
-			return newClusterSet(names), nil
+		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
+			return userGrant("alice", names...), nil
 		}),
 	})
-	got := runMiddleware(t, mw, "user-token", "THANOS-TENANT", "c3|c1", "", nil)
+	got := runMiddleware(t, mw, "user-token", "THANOS-TENANT", "c3|c1", "alice", nil)
 	if got.code != http.StatusNoContent || got.tenant != "c3|c1" {
 		t.Fatalf("intersect = %+v", got)
 	}
@@ -496,9 +389,9 @@ func TestNewMiddlewareRejectsUnknownMode(t *testing.T) {
 	NewMiddleware(Options{
 		Mode:   Mode(99),
 		Logger: log.NewNopLogger(),
-		loader: funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
+		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
 			t.Fatal("unknown mode loaded a hub index")
-			return clusterSet{}, nil
+			return grantIndex{}, nil
 		}),
 	})
 }
@@ -522,7 +415,12 @@ func TestReadChainDerive(t *testing.T) {
 
 	now := func() time.Time { return time.Unix(1, 0) }
 	pm := authentication.NewProviderManager(log.NewNopLogger(), nil)
-	pm.AddMiddleware(authentication.DefaultTenantName, authentication.WithAccessToken())
+	pm.AddMiddleware(authentication.DefaultTenantName, func(next http.Handler) http.Handler {
+		return authentication.WithAccessToken()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := authentication.ContextWithIdentity(r.Context(), "alice", nil)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		}))
+	})
 
 	chain := func(mode Mode, max int, names ...string) authentication.Middleware {
 		t.Helper()
@@ -532,11 +430,11 @@ func TestReadChainDerive(t *testing.T) {
 			MaxTenants: max,
 			TTL:        time.Hour,
 			now:        now,
-			loader: funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
-				if cred.kind != credBearer || cred.token != "user-token" {
-					return clusterSet{}, fmt.Errorf("cred = %#v", cred)
+			loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
+				if err := tokenNotVisible(ctx); err != nil {
+					return grantIndex{}, err
 				}
-				return newClusterSet(names), nil
+				return userGrant("alice", names...), nil
 			}),
 		})
 	}
@@ -571,9 +469,12 @@ func TestReadChainDerive(t *testing.T) {
 		Logger: log.NewNopLogger(),
 		TTL:    time.Hour,
 		now:    now,
-		loader: funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
+		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
 			listed.Add(1)
-			return newClusterSet([]string{"a", "b"}), nil
+			if err := tokenNotVisible(ctx); err != nil {
+				return grantIndex{}, err
+			}
+			return userGrant("alice", "a", "b"), nil
 		}),
 	})
 	absent := serveChain(t, intersect, false, "")
@@ -611,6 +512,9 @@ func TestHeaderChainRequiresClientHeader(t *testing.T) {
 	if got.code != http.StatusNoContent || !got.next || !called || got.tenant != "team-a" {
 		t.Fatalf("header chain = %+v called=%t", got, called)
 	}
+	if got.errMsg == "subject credential required" {
+		t.Fatal("HeaderChain called Load")
+	}
 }
 
 func TestChainsPanicOnBadArgs(t *testing.T) {
@@ -632,9 +536,9 @@ func TestChainsPanicOnBadArgs(t *testing.T) {
 	mustPanic("unknown mode", func() {
 		ReadChain(pm, "THANOS-TENANT", Options{
 			Mode: Mode(99),
-			loader: funcLister(func(ctx context.Context, cred credential) (clusterSet, error) {
+			loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
 				t.Fatal("unknown mode loaded a hub index")
-				return clusterSet{}, nil
+				return grantIndex{}, nil
 			}),
 		})
 	})
@@ -719,7 +623,10 @@ func runDerive(t *testing.T, mw authentication.Middleware, header string, setHea
 		w.WriteHeader(http.StatusNoContent)
 	})
 	handler := authentication.WithAccessToken()(
-		authentication.WithTenantHeaderName(header)(mw(next)),
+		authentication.WithTenantHeaderName(header)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := authentication.ContextWithIdentity(r.Context(), "alice", nil)
+			mw(next).ServeHTTP(w, r.WithContext(ctx))
+		})),
 	)
 	req := httptest.NewRequest(http.MethodGet, "/query", nil)
 	req.Header.Set("Authorization", "Bearer user-token")
@@ -749,31 +656,20 @@ func prometheusError(t *testing.T, rec *httptest.ResponseRecorder) string {
 	return body["error"]
 }
 
-func writeHubKubeconfig(t *testing.T, server string) string {
-	t.Helper()
-	tokenFile := writeTokenFile(t, "sa-token\n")
-	path := filepath.Join(t.TempDir(), "kubeconfig")
-	body := []byte(`apiVersion: v1
-kind: Config
-clusters:
-- name: hub
-  cluster:
-    server: ` + server + `
-users:
-- name: sa
-  user:
-    tokenFile: ` + tokenFile + `
-contexts:
-- name: ctx
-  context:
-    cluster: hub
-    user: sa
-current-context: ctx
-`)
-	if err := os.WriteFile(path, body, 0o600); err != nil {
-		t.Fatal(err)
+func tokenNotVisible(ctx context.Context) error {
+	token, ok := authentication.GetAccessToken(ctx)
+	if ok && token != "" {
+		return fmt.Errorf("loader saw token %q", token)
 	}
-	return path
+	return nil
+}
+
+func userGrant(user string, names ...string) grantIndex {
+	set := newClusterSet(names)
+	if set.len() == 0 {
+		return grantIndex{}
+	}
+	return grantIndex{byUser: map[string]clusterSet{user: set}}
 }
 
 type captureLogger struct {

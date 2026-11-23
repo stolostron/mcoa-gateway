@@ -1,73 +1,10 @@
-package userperms
+package mcra
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"slices"
 	"testing"
 )
-
-func TestNormalizeGroups(t *testing.T) {
-	t.Parallel()
-
-	in := []string{"b", "", "a", "b", "a"}
-	got := normalizeGroups(in)
-	want := []string{"a", "b"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("groups = %#v, want %#v", got, want)
-	}
-	if !slices.Equal(in, []string{"b", "", "a", "b", "a"}) {
-		t.Fatalf("input mutated to %#v", in)
-	}
-
-	if normalizeGroups(nil) != nil {
-		t.Fatal("nil input did not return nil")
-	}
-	if normalizeGroups([]string{"", ""}) != nil {
-		t.Fatal("only empty strings did not return nil")
-	}
-}
-
-func TestFingerprint(t *testing.T) {
-	t.Parallel()
-
-	bearer := credential{kind: credBearer, token: "tok"}
-	if got, want := bearer.fingerprint(), hashEncoding("bearer\x00tok"); got != want {
-		t.Fatalf("bearer fingerprint = %s, want %s", got, want)
-	}
-
-	left := credential{kind: credImpersonate, user: "alice", groups: []string{"b", "a"}}
-	right := credential{kind: credImpersonate, user: "alice", groups: []string{"a", "", "b", "a"}}
-	if left.fingerprint() != right.fingerprint() {
-		t.Fatal("group order changed the impersonation fingerprint")
-	}
-	if got, want := left.fingerprint(), hashEncoding("impersonate\x00alice\x00a\x00b"); got != want {
-		t.Fatalf("impersonate fingerprint = %s, want %s", got, want)
-	}
-
-	other := credential{kind: credBearer, token: "alice"}
-	if other.fingerprint() == left.fingerprint() {
-		t.Fatal("bearer token collided with an impersonation subject")
-	}
-
-	noGroups := credential{kind: credImpersonate, user: "alice"}
-	if got, want := noGroups.fingerprint(), hashEncoding("impersonate\x00alice"); got != want {
-		t.Fatalf("impersonate without groups = %s, want %s", got, want)
-	}
-
-	defer func() {
-		if recover() == nil {
-			t.Fatal("zero credential did not panic")
-		}
-	}()
-	_ = credential{}.fingerprint()
-}
-
-func hashEncoding(raw string) fingerprint {
-	sum := sha256.Sum256([]byte(raw))
-	return fingerprint(hex.EncodeToString(sum[:]))
-}
 
 func TestClusterSet(t *testing.T) {
 	t.Parallel()

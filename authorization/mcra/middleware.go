@@ -1,4 +1,4 @@
-package userperms
+package mcra
 
 import (
 	"context"
@@ -15,8 +15,7 @@ import (
 )
 
 // Mode selects how NewMiddleware turns a clusterSet into the request tenant.
-// The zero value is ModeIntersect, which is today's behavior. Existing tests
-// that leave Mode unset keep admit().
+// The zero value is ModeIntersect. Callers that leave Mode unset keep admit().
 type Mode uint8
 
 const (
@@ -46,27 +45,27 @@ func normalizeMaxTenants(n int) int {
 // There is no tenant header field. The chain that calls NewMiddleware records
 // the header name in the request context.
 type Options struct {
-	// TTL is how long a successful cluster set is reused.
+	// TTL is how long a successful snapshot is reused.
 	// Zero or negative selects 30s.
 	TTL time.Duration
 
-	// Kubeconfig is the hub kubeconfig used as the impersonation base.
+	// Kubeconfig is the hub kubeconfig the gateway uses to list as itself.
 	// Empty selects in-cluster config.
 	Kubeconfig string
 
 	// Logger receives list failures. Nil discards them.
-	// A line includes the credential kind and subject, not the bearer token.
+	// A line includes the subject, not a bearer token.
 	Logger log.Logger
 
 	// Mode zero value is ModeIntersect.
 	Mode Mode
 
 	// MaxTenants caps a derived allow-list. <=0 selects defaultMaxTenants.
-	// Intersect does not read it. It is not part of the index key.
+	// Intersect does not read it. It is not part of the snapshot key.
 	MaxTenants int
 
-	// loader and now are test seams. Either one selects a private index.
-	loader lister
+	// loader and now are test seams. Either one selects a private snapshot.
+	loader loader
 	now    func() time.Time
 }
 
@@ -74,14 +73,14 @@ type Options struct {
 // It panics if Mode is unknown, or if the hub config cannot be loaded.
 // Call it while building the router, not per request.
 //
-// ModeDerive and ModeIntersect share one accessIndex when Kubeconfig and TTL
-// match. Mode and MaxTenants stay out of indexKey. The cached value is the
-// full set. The cap is applied when the set is read.
+// ModeDerive and ModeIntersect share one snapshot when Kubeconfig and TTL
+// match. Mode and MaxTenants stay out of snapshotKey. The cached value is the
+// full grantIndex. The cap is applied when the set is read.
 func NewMiddleware(opts Options) authentication.Middleware {
 	switch opts.Mode {
 	case ModeIntersect, ModeDerive:
 	default:
-		panic("userperms: unknown mode")
+		panic("mcra: unknown mode")
 	}
 	opts.MaxTenants = normalizeMaxTenants(opts.MaxTenants)
 	if opts.TTL <= 0 {
@@ -91,7 +90,7 @@ func NewMiddleware(opts Options) authentication.Middleware {
 	if logger == nil {
 		logger = log.NewNopLogger()
 	}
-	idx := acquireIndex(opts)
+	snap := acquireSnapshot(opts)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var requested string
@@ -113,23 +112,17 @@ func NewMiddleware(opts Options) authentication.Middleware {
 				httperr.PrometheusAPIError(w, "tenant header is not in the request context", http.StatusInternalServerError)
 				return
 			}
-			cred, err := credentialFromContext(r.Context())
-			if errors.Is(err, errNoCredential) {
+			user, groups, ok := subjectFromContext(r.Context())
+			if !ok {
 				httperr.PrometheusAPIError(w, "subject credential required", http.StatusUnauthorized)
 				return
 			}
-			set, err := idx.clusterSet(r.Context(), cred)
+			index, err := snap.grants(r.Context())
 			if err != nil {
-				subject := cred.user
-				if subject == "" {
-					subject, _ = authentication.GetSubject(r.Context())
-				}
 				level.Error(logger).Log(
-					"msg", "userpermissions list failed",
+					"msg", "multicluster role assignment list failed",
 					"err", err,
-					"kind", cred.kind.String(),
-					"subject", subject,
-					"clusters", set.len(),
+					"subject", user,
 				)
 				status := http.StatusServiceUnavailable
 				if errors.Is(err, errHubDenied) {
@@ -138,11 +131,12 @@ func NewMiddleware(opts Options) authentication.Middleware {
 				httperr.PrometheusAPIError(w, "cannot evaluate cluster access", status)
 				return
 			}
+			allowed := index.clusters(user, groups)
 
 			var admittedTenant string
 			switch opts.Mode {
 			case ModeDerive:
-				got, err := derive(set, opts.MaxTenants)
+				got, err := derive(allowed, opts.MaxTenants)
 				if err != nil {
 					if errors.Is(err, errNoClusters) {
 						httperr.PrometheusAPIError(w, "no access to any cluster", http.StatusForbidden)
@@ -152,7 +146,7 @@ func NewMiddleware(opts Options) authentication.Middleware {
 					if errors.As(err, &tooMany) {
 						level.Warn(logger).Log(
 							"msg", "derived allow-list exceeds max",
-							"clusters", set.len(),
+							"clusters", allowed.len(),
 							"max", opts.MaxTenants,
 						)
 						httperr.PrometheusAPIError(w, fmt.Sprintf("too many tenants (max %d)", tooMany.max), http.StatusBadRequest)
@@ -163,7 +157,7 @@ func NewMiddleware(opts Options) authentication.Middleware {
 				}
 				admittedTenant = got.String()
 			default:
-				got, ok := admit(splitTenant(requested), set)
+				got, ok := admit(splitTenant(requested), allowed)
 				if !ok {
 					httperr.PrometheusAPIError(w, "no access to the requested clusters", http.StatusForbidden)
 					return
@@ -178,36 +172,26 @@ func NewMiddleware(opts Options) authentication.Middleware {
 	}
 }
 
-var errNoCredential = errors.New("no subject credential")
-
-// credentialFromContext prefers a non-empty access token.
-// There is no fallback from a bearer token to impersonation.
-// Without a token, a non-empty subject is impersonated. Missing groups are an empty list.
-func credentialFromContext(ctx context.Context) (credential, error) {
-	if token, ok := authentication.GetAccessToken(ctx); ok && token != "" {
-		return credential{kind: credBearer, token: token}, nil
+// subjectFromContext reads the authenticated user and groups.
+// An access token is not a subject. An empty user is missing.
+func subjectFromContext(ctx context.Context) (user string, groups []string, ok bool) {
+	user, ok = authentication.GetSubject(ctx)
+	if !ok || user == "" {
+		return "", nil, false
 	}
-	subject, ok := authentication.GetSubject(ctx)
-	if !ok || subject == "" {
-		return credential{}, errNoCredential
-	}
-	groups, _ := authentication.GetGroups(ctx)
-	return credential{
-		kind:   credImpersonate,
-		user:   subject,
-		groups: normalizeGroups(groups),
-	}, nil
+	groups, _ = authentication.GetGroups(ctx)
+	return user, groups, true
 }
 
-// HeaderChain is the read chain for --userperms.disable.
+// HeaderChain is the read chain for --mcra.disable.
 // It requires the client tenant header and looks up that tenant's authenticator,
 // falling back to DefaultTenantName. It does not call NewMiddleware.
 func HeaderChain(pm *authentication.ProviderManager, header string) authentication.Middleware {
 	if pm == nil {
-		panic("userperms: nil provider manager")
+		panic("mcra: nil provider manager")
 	}
 	if header == "" {
-		panic("userperms: empty tenant header")
+		panic("mcra: empty tenant header")
 	}
 	return compose(
 		authentication.WithTenantFromHeader(header),
@@ -215,19 +199,20 @@ func HeaderChain(pm *authentication.ProviderManager, header string) authenticati
 	)
 }
 
-// ReadChain is the authentication plus UserPermissions prefix when
-// UserPermissions is enabled. Callers that enforce labels append
-// authorization.WithTenantLabel after it. Alertmanager does not.
+// ReadChain is authentication plus the MulticlusterRoleAssignment allow-list.
+// Callers that enforce PromQL or LogQL labels append authorization.WithTenantLabel
+// after it. Alertmanager does not. It parses GetTenant with tenantAllowList in
+// api/metrics/v1.
 // ModeDerive uses WithTenantHeaderName, WithDefaultTenantMiddlewares, and NewMiddleware.
 // ModeIntersect uses WithTenantFromHeader, WithTenantMiddlewares, and NewMiddleware.
 // The zero Mode is ModeIntersect. ReadChain panics on an unknown mode, a nil
 // manager, or an empty header. It calls NewMiddleware, which loads hub config.
 func ReadChain(pm *authentication.ProviderManager, header string, opts Options) authentication.Middleware {
 	if pm == nil {
-		panic("userperms: nil provider manager")
+		panic("mcra: nil provider manager")
 	}
 	if header == "" {
-		panic("userperms: empty tenant header")
+		panic("mcra: empty tenant header")
 	}
 	switch opts.Mode {
 	case ModeDerive:
@@ -243,7 +228,7 @@ func ReadChain(pm *authentication.ProviderManager, header string, opts Options) 
 			NewMiddleware(opts),
 		)
 	default:
-		panic("userperms: unknown mode")
+		panic("mcra: unknown mode")
 	}
 }
 

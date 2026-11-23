@@ -53,7 +53,7 @@ import (
 	tracesv1 "github.com/stolostron/mcoa-gateway/api/traces/v1"
 	"github.com/stolostron/mcoa-gateway/authentication"
 	"github.com/stolostron/mcoa-gateway/authorization"
-	"github.com/stolostron/mcoa-gateway/authorization/userperms"
+	"github.com/stolostron/mcoa-gateway/authorization/mcra"
 	"github.com/stolostron/mcoa-gateway/client"
 	"github.com/stolostron/mcoa-gateway/logger"
 	"github.com/stolostron/mcoa-gateway/ratelimit"
@@ -93,18 +93,18 @@ type config struct {
 
 	tenantsConfigPath string
 
-	debug               debugConfig
-	server              serverConfig
-	tls                 tlsConfig
-	metrics             metricsConfig
-	logs                logsConfig
-	traces              tracesConfig
-	alertmanager        alertmanagerConfig
-	probes              probesConfig
-	middleware          middlewareConfig
-	internalTracing     internalTracingConfig
-	userpermsDisable    bool
-	userpermsMaxTenants int
+	debug           debugConfig
+	server          serverConfig
+	tls             tlsConfig
+	metrics         metricsConfig
+	logs            logsConfig
+	traces          tracesConfig
+	alertmanager    alertmanagerConfig
+	probes          probesConfig
+	middleware      middlewareConfig
+	internalTracing internalTracingConfig
+	mcraDisable     bool
+	mcraMaxTenants  int
 }
 
 type debugConfig struct {
@@ -627,21 +627,21 @@ func main() {
 			}
 
 			// Write-only traces do not call readChain, so startup does not load the hub.
-			// --userperms.disable keeps the header-required chain and does not call the hub.
+			// --mcra.disable keeps the header-required chain and does not call the hub.
 			tracesRead := cfg.traces.enabled && (cfg.traces.readEndpoint != nil || cfg.traces.readTemplateEndpoint != "" || cfg.traces.tempoEndpoint != nil)
-			base := userperms.Options{
+			base := mcra.Options{
 				Logger:     logger,
-				MaxTenants: cfg.userpermsMaxTenants,
+				MaxTenants: cfg.mcraMaxTenants,
 			}
 			deriveOpts := base
-			deriveOpts.Mode = userperms.ModeDerive
+			deriveOpts.Mode = mcra.ModeDerive
 			intersectOpts := base
-			intersectOpts.Mode = userperms.ModeIntersect
-			readChain := func(header string, opts userperms.Options) authentication.Middleware {
-				if cfg.userpermsDisable {
-					return userperms.HeaderChain(pm, header)
+			intersectOpts.Mode = mcra.ModeIntersect
+			readChain := func(header string, opts mcra.Options) authentication.Middleware {
+				if cfg.mcraDisable {
+					return mcra.HeaderChain(pm, header)
 				}
-				return userperms.ReadChain(pm, header, opts)
+				return mcra.ReadChain(pm, header, opts)
 			}
 
 			// Metrics.
@@ -1300,9 +1300,9 @@ func parseFlags() (config, error) {
 		"The number of concurrent requests that can buffered.")
 	flag.DurationVar(&cfg.middleware.backLogDurationConcurrentRequests, "middleware.backlog-duration-concurrent-requests", 1*time.Millisecond,
 		"The time duration to buffer up concurrent requests.")
-	flag.BoolVar(&cfg.userpermsDisable, "userperms.disable", false,
-		"Skip UserPermissions checks on read APIs. Reads then trust the client tenant header. For tests without a hub.")
-	flag.IntVar(&cfg.userpermsMaxTenants, "userperms.max-tenants", 0,
+	flag.BoolVar(&cfg.mcraDisable, "mcra.disable", false,
+		"Trust the client tenant header on read APIs and do not call the hub. Without this flag the gateway lists MulticlusterRoleAssignment and PlacementDecision as itself.")
+	flag.IntVar(&cfg.mcraMaxTenants, "mcra.max-tenants", 0,
 		"Maximum ManagedClusters a derived read may cover. Values <= 0 use 100. "+
 			"Over the limit the request fails with 400 and the list is not truncated. "+
 			"Header intersection ignores this flag.")
