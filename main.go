@@ -703,8 +703,10 @@ func main() {
 					metricsv1.WithQueryMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
 					metricsv1.WithReadMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
 					metricsv1.WithUIMiddleware(metricsv1.WithEnforceAuthorizationLabels()),
+					// Alertmanager uses the derive ReadChain. It does not append
+					// WithTenantLabel or the PromQL enforcer.
 					metricsv1.WithAlertmanagerMiddleware(
-						readChain(cfg.metrics.tenantHeader, intersectOpts),
+						readChain(cfg.metrics.tenantHeader, deriveOpts),
 						rateLimitMiddleware,
 					),
 				)

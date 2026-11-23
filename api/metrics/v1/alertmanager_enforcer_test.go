@@ -13,7 +13,7 @@ import (
 	"github.com/stolostron/mcoa-gateway/authentication"
 )
 
-func TestHasMatcherForLabel(t *testing.T) {
+func TestOwnsSilenceSingleCluster(t *testing.T) {
 	t.Parallel()
 
 	label := "tenant_id"
@@ -69,11 +69,15 @@ func TestHasMatcherForLabel(t *testing.T) {
 		},
 	}
 
+	allow, err := parseTenantAllowList(tenantA)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := hasMatcherForLabel(tc.matchers, label, tenantA); got != tc.want {
-				t.Fatalf("hasMatcherForLabel() = %v, want %v", got, tc.want)
+			if got := allow.ownsSilence(label, tc.matchers); got != tc.want {
+				t.Fatalf("ownsSilence() = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -251,4 +255,8 @@ func TestWithEnforceTenancyOnSilenceID(t *testing.T) {
 
 func strPtr(s string) *string {
 	return &s
+}
+
+func boolPtr(b bool) *bool {
+	return &b
 }
