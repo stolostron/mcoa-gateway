@@ -30,7 +30,7 @@ func TestMiddlewareRewritesAdmittedTenant(t *testing.T) {
 			if err := tokenNotVisible(ctx); err != nil {
 				return grantIndex{}, err
 			}
-			return userGrant("alice", "cluster-a", "cluster-c"), nil
+			return userGrant("cluster-a", "cluster-c"), nil
 		}),
 	})
 	got := runMiddleware(t, mw, "user-token", "THANOS-TENANT", "cluster-b|cluster-a", "alice", []string{"g"})
@@ -58,7 +58,7 @@ func TestMiddlewareFailClosed(t *testing.T) {
 	now := func() time.Time { return time.Unix(1, 0) }
 	allowed := funcLoader(func(ctx context.Context) (grantIndex, error) {
 		calls.Add(1)
-		return userGrant("alice", "cluster-z"), nil
+		return userGrant("cluster-z"), nil
 	})
 	mw := NewMiddleware(Options{Logger: log.NewNopLogger(), loader: allowed, now: now, TTL: time.Hour})
 	denied := runMiddleware(t, mw, "user-token", "THANOS-TENANT", "cluster-a|cluster-b", "alice", nil)
@@ -170,7 +170,7 @@ func TestNewMiddlewarePrivateIndexesDoNotShare(t *testing.T) {
 		Logger:     log.NewNopLogger(),
 		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
 			callsA.Add(1)
-			return userGrant("alice", "cluster-a"), nil
+			return userGrant("cluster-a"), nil
 		}),
 	})
 	b := NewMiddleware(Options{
@@ -180,7 +180,7 @@ func TestNewMiddlewarePrivateIndexesDoNotShare(t *testing.T) {
 		Logger:     log.NewNopLogger(),
 		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
 			callsB.Add(1)
-			return userGrant("alice", "cluster-b"), nil
+			return userGrant("cluster-b"), nil
 		}),
 	})
 	gotA := runMiddleware(t, a, "user-token", "THANOS-TENANT", "cluster-a|cluster-b", "alice", nil)
@@ -207,7 +207,7 @@ func TestDeriveMiddleware(t *testing.T) {
 				if err := tokenNotVisible(ctx); err != nil {
 					return grantIndex{}, err
 				}
-				return userGrant("alice", names...), nil
+				return userGrant(names...), nil
 			}),
 			now: now,
 			TTL: time.Hour,
@@ -248,7 +248,7 @@ func TestDeriveMiddleware(t *testing.T) {
 		now:        now,
 		TTL:        time.Hour,
 		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
-			return userGrant("alice", "secret-cluster", "b", "a"), nil
+			return userGrant("secret-cluster", "b", "a"), nil
 		}),
 	})
 	over := runDerive(t, capped, "THANOS-TENANT", true, "client-name")
@@ -284,7 +284,7 @@ func TestDeriveMiddlewareDefaultCap(t *testing.T) {
 		Logger: log.NewNopLogger(),
 		Mode:   ModeDerive,
 		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
-			return userGrant("alice", names...), nil
+			return userGrant(names...), nil
 		}),
 		now: now,
 		TTL: time.Hour,
@@ -304,7 +304,7 @@ func TestDeriveMiddlewareDefaultCap(t *testing.T) {
 		Mode:       ModeDerive,
 		MaxTenants: -1,
 		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
-			return userGrant("alice", exact...), nil
+			return userGrant(exact...), nil
 		}),
 		now: now,
 		TTL: time.Hour,
@@ -329,7 +329,7 @@ func TestDeriveMiddlewareRejectsClientTenant(t *testing.T) {
 		TTL:    time.Hour,
 		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
 			calls.Add(1)
-			return userGrant("alice", "cluster-a"), nil
+			return userGrant("cluster-a"), nil
 		}),
 	})
 	var result httpResult
@@ -369,7 +369,7 @@ func TestIntersectIgnoresMaxTenants(t *testing.T) {
 		now:        func() time.Time { return time.Unix(1, 0) },
 		TTL:        time.Hour,
 		loader: funcLoader(func(ctx context.Context) (grantIndex, error) {
-			return userGrant("alice", names...), nil
+			return userGrant(names...), nil
 		}),
 	})
 	got := runMiddleware(t, mw, "user-token", "THANOS-TENANT", "c3|c1", "alice", nil)
@@ -434,7 +434,7 @@ func TestReadChainDerive(t *testing.T) {
 				if err := tokenNotVisible(ctx); err != nil {
 					return grantIndex{}, err
 				}
-				return userGrant("alice", names...), nil
+				return userGrant(names...), nil
 			}),
 		})
 	}
@@ -474,7 +474,7 @@ func TestReadChainDerive(t *testing.T) {
 			if err := tokenNotVisible(ctx); err != nil {
 				return grantIndex{}, err
 			}
-			return userGrant("alice", "a", "b"), nil
+			return userGrant("a", "b"), nil
 		}),
 	})
 	absent := serveChain(t, intersect, false, "")
@@ -664,12 +664,12 @@ func tokenNotVisible(ctx context.Context) error {
 	return nil
 }
 
-func userGrant(user string, names ...string) grantIndex {
+func userGrant(names ...string) grantIndex {
 	set := newClusterSet(names)
 	if set.len() == 0 {
 		return grantIndex{}
 	}
-	return grantIndex{byUser: map[string]clusterSet{user: set}}
+	return grantIndex{byUser: map[string]clusterSet{"alice": set}}
 }
 
 type captureLogger struct {

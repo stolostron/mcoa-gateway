@@ -146,7 +146,7 @@ func TestAlertmanagerListSilencesFiltersOwned(t *testing.T) {
 		t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
 	}
 
-	values := silenceTenantValues(t, rr.Body.Bytes(), label)
+	values := silenceTenantValues(t, rr.Body.Bytes())
 	if len(values) != 1 || values[0] != owned {
 		t.Fatalf("tenants %v", values)
 	}
@@ -177,7 +177,7 @@ func silencePage(id, label, tenant string) string {
 }`
 }
 
-func silenceTenantValues(t *testing.T, body []byte, label string) []string {
+func silenceTenantValues(t *testing.T, body []byte) []string {
 	t.Helper()
 
 	var sils models.GettableSilences
@@ -190,7 +190,7 @@ func silenceTenantValues(t *testing.T, body []byte, label string) []string {
 			t.Fatal("nil silence")
 		}
 		for _, m := range sil.Matchers {
-			if m != nil && m.Name != nil && *m.Name == label && m.Value != nil {
+			if m != nil && m.Name != nil && *m.Name == "tenant_id" && m.Value != nil {
 				values = append(values, *m.Value)
 			}
 		}

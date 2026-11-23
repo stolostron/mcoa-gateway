@@ -16,6 +16,11 @@ import (
 	"github.com/stolostron/mcoa-gateway/authentication"
 )
 
+const (
+	allowListLabel     = "tenant_id"
+	allowListSilenceID = "802146e0-1f7a-42a6-ab0e-1e631479970b"
+)
+
 func TestWithEnforceTenancyOnFilterAllowList(t *testing.T) {
 	t.Parallel()
 
@@ -300,15 +305,10 @@ func TestWithEnforceTenancyOnSilenceMatchersAllowList(t *testing.T) {
 func TestWithEnforceTenancyOnSilenceIDAllowList(t *testing.T) {
 	t.Parallel()
 
-	const (
-		label = "tenant_id"
-		silID = "802146e0-1f7a-42a6-ab0e-1e631479970b"
-	)
-
 	t.Run("owned equality proxies get and delete", func(t *testing.T) {
 		t.Parallel()
 		for _, method := range []string{http.MethodGet, http.MethodDelete} {
-			code, resp, called := serveSilenceID(t, method, "cluster-a|cluster-b", silID, http.StatusOK, silenceObject(silID, label, "cluster-a", false, boolPtr(true)))
+			code, resp, called := serveSilenceID(t, method, "cluster-a|cluster-b", http.StatusOK, silenceObject("cluster-a", false, boolPtr(true)))
 			if code != http.StatusOK || !called {
 				t.Fatalf("%s status %d called %v body %s", method, code, called, resp)
 			}
@@ -317,7 +317,7 @@ func TestWithEnforceTenancyOnSilenceIDAllowList(t *testing.T) {
 
 	t.Run("single cluster still proxies", func(t *testing.T) {
 		t.Parallel()
-		code, _, called := serveSilenceID(t, http.MethodGet, "cluster-a", silID, http.StatusOK, silenceObject(silID, label, "cluster-a", false, nil))
+		code, _, called := serveSilenceID(t, http.MethodGet, "cluster-a", http.StatusOK, silenceObject("cluster-a", false, nil))
 		if code != http.StatusOK || !called {
 			t.Fatalf("status %d called %v", code, called)
 		}
@@ -325,7 +325,7 @@ func TestWithEnforceTenancyOnSilenceIDAllowList(t *testing.T) {
 
 	t.Run("foreign cluster", func(t *testing.T) {
 		t.Parallel()
-		code, resp, called := serveSilenceID(t, http.MethodGet, "cluster-a|cluster-b", silID, http.StatusOK, silenceObject(silID, label, "cluster-c", false, boolPtr(true)))
+		code, resp, called := serveSilenceID(t, http.MethodGet, "cluster-a|cluster-b", http.StatusOK, silenceObject("cluster-c", false, boolPtr(true)))
 		if code != http.StatusForbidden || called || !strings.Contains(resp, "forbidden") || strings.Contains(resp, "cluster-c") {
 			t.Fatalf("status %d called %v body %s", code, called, resp)
 		}
@@ -333,7 +333,7 @@ func TestWithEnforceTenancyOnSilenceIDAllowList(t *testing.T) {
 
 	t.Run("regex", func(t *testing.T) {
 		t.Parallel()
-		code, resp, called := serveSilenceID(t, http.MethodGet, "cluster-a|cluster-b", silID, http.StatusOK, silenceObject(silID, label, ".*", true, boolPtr(true)))
+		code, resp, called := serveSilenceID(t, http.MethodGet, "cluster-a|cluster-b", http.StatusOK, silenceObject(".*", true, boolPtr(true)))
 		if code != http.StatusForbidden || called || !strings.Contains(resp, "forbidden") {
 			t.Fatalf("status %d called %v body %s", code, called, resp)
 		}
@@ -341,7 +341,7 @@ func TestWithEnforceTenancyOnSilenceIDAllowList(t *testing.T) {
 
 	t.Run("negative matcher", func(t *testing.T) {
 		t.Parallel()
-		code, _, called := serveSilenceID(t, http.MethodGet, "cluster-a|cluster-b", silID, http.StatusOK, silenceObject(silID, label, "cluster-a", false, boolPtr(false)))
+		code, _, called := serveSilenceID(t, http.MethodGet, "cluster-a|cluster-b", http.StatusOK, silenceObject("cluster-a", false, boolPtr(false)))
 		if code != http.StatusForbidden || called {
 			t.Fatalf("status %d called %v", code, called)
 		}
@@ -349,7 +349,7 @@ func TestWithEnforceTenancyOnSilenceIDAllowList(t *testing.T) {
 
 	t.Run("upstream not found", func(t *testing.T) {
 		t.Parallel()
-		code, _, called := serveSilenceID(t, http.MethodDelete, "cluster-a|cluster-b", silID, http.StatusNotFound, "")
+		code, _, called := serveSilenceID(t, http.MethodDelete, "cluster-a|cluster-b", http.StatusNotFound, "")
 		if code != http.StatusNotFound || called {
 			t.Fatalf("status %d called %v", code, called)
 		}
@@ -357,7 +357,7 @@ func TestWithEnforceTenancyOnSilenceIDAllowList(t *testing.T) {
 
 	t.Run("upstream error", func(t *testing.T) {
 		t.Parallel()
-		code, _, called := serveSilenceID(t, http.MethodGet, "cluster-a|cluster-b", silID, http.StatusInternalServerError, `"upstream failed"`)
+		code, _, called := serveSilenceID(t, http.MethodGet, "cluster-a|cluster-b", http.StatusInternalServerError, `"upstream failed"`)
 		if code != http.StatusBadGateway || called {
 			t.Fatalf("status %d called %v", code, called)
 		}
@@ -365,7 +365,7 @@ func TestWithEnforceTenancyOnSilenceIDAllowList(t *testing.T) {
 
 	t.Run("missing tenant", func(t *testing.T) {
 		t.Parallel()
-		code, resp, called := serveSilenceID(t, http.MethodGet, "", silID, http.StatusOK, silenceObject(silID, label, "cluster-a", false, boolPtr(true)))
+		code, resp, called := serveSilenceID(t, http.MethodGet, "", http.StatusOK, silenceObject("cluster-a", false, boolPtr(true)))
 		if code != http.StatusInternalServerError || called || !strings.Contains(resp, "error finding tenant") {
 			t.Fatalf("status %d called %v body %s", code, called, resp)
 		}
@@ -375,10 +375,9 @@ func TestWithEnforceTenancyOnSilenceIDAllowList(t *testing.T) {
 func TestSilenceListHandler(t *testing.T) {
 	t.Parallel()
 
-	const label = "tenant_id"
-	page := "[" + listedSilence("id-a", label, "cluster-a", false, nil) +
-		"," + listedSilence("id-c", label, "cluster-c", false, boolPtr(true)) +
-		"," + listedSilence("id-r", label, ".*", true, boolPtr(true)) + "]"
+	page := "[" + listedSilence("id-a", "cluster-a", false, nil) +
+		"," + listedSilence("id-c", "cluster-c", false, boolPtr(true)) +
+		"," + listedSilence("id-r", ".*", true, boolPtr(true)) + "]"
 
 	t.Run("keeps owned equality", func(t *testing.T) {
 		t.Parallel()
@@ -387,7 +386,7 @@ func TestSilenceListHandler(t *testing.T) {
 		if code != http.StatusOK || !called {
 			t.Fatalf("status %d called %v body %s", code, called, resp)
 		}
-		values := silenceTenantValues(t, []byte(resp), label)
+		values := silenceTenantValues(t, []byte(resp))
 		if len(values) != 1 || values[0] != "cluster-a" {
 			t.Fatalf("tenants %v body %s", values, resp)
 		}
@@ -405,9 +404,9 @@ func TestSilenceListHandler(t *testing.T) {
 
 	t.Run("content type and caller filters", func(t *testing.T) {
 		t.Parallel()
-		mixed := "[" + listedSilence("id-a", label, "cluster-a", false, boolPtr(true)) +
-			"," + listedSilence("id-b", label, "cluster-b", false, boolPtr(true)) +
-			"," + listedSilence("id-c", label, "cluster-c", false, boolPtr(true)) + "]"
+		mixed := "[" + listedSilence("id-a", "cluster-a", false, boolPtr(true)) +
+			"," + listedSilence("id-b", "cluster-b", false, boolPtr(true)) +
+			"," + listedSilence("id-c", "cluster-c", false, boolPtr(true)) + "]"
 		q := url.Values{}
 		q.Add("filter", `alertname="Watchdog"`)
 		q.Add("filter", `tenant_id="cluster-a"`)
@@ -416,7 +415,7 @@ func TestSilenceListHandler(t *testing.T) {
 		if code != http.StatusOK || !called {
 			t.Fatalf("status %d called %v body %s", code, called, resp)
 		}
-		values := silenceTenantValues(t, []byte(resp), label)
+		values := silenceTenantValues(t, []byte(resp))
 		if len(values) != 2 || values[0] != "cluster-a" || values[1] != "cluster-b" {
 			t.Fatalf("tenants %v", values)
 		}
@@ -427,8 +426,8 @@ func TestSilenceListHandler(t *testing.T) {
 
 	t.Run("empty owned set", func(t *testing.T) {
 		t.Parallel()
-		foreign := "[" + listedSilence("id-c", label, "cluster-c", false, boolPtr(true)) +
-			"," + listedSilence("id-r", label, ".*", true, boolPtr(true)) + "]"
+		foreign := "[" + listedSilence("id-c", "cluster-c", false, boolPtr(true)) +
+			"," + listedSilence("id-r", ".*", true, boolPtr(true)) + "]"
 		code, resp, called := serveList(t, "cluster-a|cluster-b", "", foreign, nil)
 		if code != http.StatusOK || !called || resp != "[]" {
 			t.Fatalf("status %d called %v body %q", code, called, resp)
@@ -461,10 +460,10 @@ func TestSilenceListHandler(t *testing.T) {
 
 	t.Run("single cluster", func(t *testing.T) {
 		t.Parallel()
-		mixed := "[" + listedSilence("id-a", label, "cluster-a", false, nil) +
-			"," + listedSilence("id-b", label, "cluster-b", false, boolPtr(true)) + "]"
+		mixed := "[" + listedSilence("id-a", "cluster-a", false, nil) +
+			"," + listedSilence("id-b", "cluster-b", false, boolPtr(true)) + "]"
 		code, resp, _ := serveList(t, "cluster-a", "", mixed, nil)
-		values := silenceTenantValues(t, []byte(resp), label)
+		values := silenceTenantValues(t, []byte(resp))
 		if code != http.StatusOK || len(values) != 1 || values[0] != "cluster-a" {
 			t.Fatalf("status %d tenants %v body %s", code, values, resp)
 		}
@@ -525,12 +524,12 @@ func postSilence(t *testing.T, tenant, method, body string) (int, string, *model
 	return rec.Code, rec.Body.String(), proxied
 }
 
-func serveSilenceID(t *testing.T, method, tenant, id string, upstreamStatus int, upstreamBody string) (int, string, bool) {
+func serveSilenceID(t *testing.T, method, tenant string, upstreamStatus int, upstreamBody string) (int, string, bool) {
 	t.Helper()
 
 	var called bool
 	upstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/api/v2/silence/"+id {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v2/silence/"+allowListSilenceID {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(upstreamStatus)
 			_, _ = w.Write([]byte(upstreamBody))
@@ -548,9 +547,9 @@ func serveSilenceID(t *testing.T, method, tenant, id string, upstreamStatus int,
 		called = true
 		w.WriteHeader(http.StatusOK)
 	})
-	req := httptest.NewRequest(method, "/am/api/v2/silence/"+id, nil)
+	req := httptest.NewRequest(method, "/am/api/v2/silence/"+allowListSilenceID, nil)
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("silenceID", id)
+	rctx.URLParams.Add("silenceID", allowListSilenceID)
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
 	if tenant != "" {
 		ctx = authentication.WithTenantValue(ctx, tenant)
@@ -608,7 +607,7 @@ func serveListStatusQuery(t *testing.T, tenant, rawQuery string, status int, bod
 	return rec.Code, rec.Body.String(), called
 }
 
-func listedSilence(id, label, value string, isRegex bool, isEqual *bool) string {
+func listedSilence(id, value string, isRegex bool, isEqual *bool) string {
 	regex := "false"
 	if isRegex {
 		regex = "true"
@@ -629,14 +628,14 @@ func listedSilence(id, label, value string, isRegex bool, isEqual *bool) string 
   "createdBy": "author",
   "endsAt": "2020-02-13T13:00:02.084Z",
   "matchers": [
-    {"isRegex": ` + regex + equal + `, "name": "` + label + `", "value": "` + value + `"},
+    {"isRegex": ` + regex + equal + `, "name": "` + allowListLabel + `", "value": "` + value + `"},
     {"isRegex": false, "name": "alertname", "value": "Watchdog"}
   ],
   "startsAt": "2020-02-13T12:02:01.000Z"
 }`
 }
 
-func silenceObject(id, label, value string, isRegex bool, isEqual *bool) string {
+func silenceObject(value string, isRegex bool, isEqual *bool) string {
 	regex := "false"
 	if isRegex {
 		regex = "true"
@@ -650,13 +649,13 @@ func silenceObject(id, label, value string, isRegex bool, isEqual *bool) string 
 		}
 	}
 	return `{
-  "id": "` + id + `",
+  "id": "` + allowListSilenceID + `",
   "status": {"state": "active"},
   "updatedAt": "2020-01-15T09:06:23.419Z",
   "comment": "comment",
   "createdBy": "author",
   "endsAt": "2020-02-13T13:00:02.084Z",
-  "matchers": [{"isRegex": ` + regex + equal + `, "name": "` + label + `", "value": "` + value + `"}],
+  "matchers": [{"isRegex": ` + regex + equal + `, "name": "` + allowListLabel + `", "value": "` + value + `"}],
   "startsAt": "2020-02-13T12:02:01.000Z"
 }`
 }
